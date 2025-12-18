@@ -19,13 +19,34 @@ The JSON object MUST have exactly these keys:
     "total_touches": 1,
     "min_days_between_touches": 0,
     "cadence_days": 0,
-    "touches": [],
+    "touches": [
+      {
+        "step": 1,
+        "role": "initial",
+        "trigger": "reevaluation_date",
+        "offset_days_from_start": 0,
+        "channel": "email",
+        "channel_hint_order": ["EMAIL", "LINKEDIN"],
+        "action_type": "value_share",
+        "content_theme": "value_delivery",
+        "status": "ready_to_execute",
+        "notes": ""
+      }
+    ],
     "exit_conditions": {
-      "immediate": [],
-      "end_of_sequence": []
+      "immediate": ["on_any_response", "on_explicit_opt_out"],
+      "end_of_sequence": ["wait_30d_before_retry"]
     }
   }
 }
+
+Notes on touches[] format:
+- step: 1, 2, 3... (sequential number)
+- role: "initial" | "follow_up" | "final"
+- trigger: "reevaluation_date" | "no_response" | "event" | "manual"
+- channel: lowercase ("email", "linkedin", "phone", "whatsapp")
+- action_type: "check_in" | "follow_up" | "value_share" | "break_up"
+- status: "ready_to_execute" | "pending" | "conditional"
 
 ⚠️ CRITICAL OUTPUT FORMAT:
 Your response must be PURE JSON only.

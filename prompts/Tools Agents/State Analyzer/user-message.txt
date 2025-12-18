@@ -29,7 +29,7 @@ The JSON object MUST have exactly these keys:
     }
   ],
   "global_state": {
-"meeting_scheduled": {
+    "meeting_scheduled": {
       "has_upcoming_meeting": false,
       "meeting_date": null,
       "meeting_type": null,
@@ -57,6 +57,16 @@ The JSON object MUST have exactly these keys:
       "timing_verdict": "WAIT",
       "long_timeline_detected": false,
       "reasoning": ""
+    },
+    "explicit_timing_agreement": {
+      "exists": false,
+      "type": null,
+      "agreed_date_verbatim": null,
+      "agreed_date_iso": null,
+      "source_activity_type": null,
+      "source_date": null,
+      "prospect_verbatim": null,
+      "our_commitment": null
     }
   }
 }

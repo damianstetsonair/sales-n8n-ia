@@ -85,6 +85,14 @@ The JSON object MUST have exactly these keys:
       "description": ""
     }
   ],
+  "stakeholder_map": {
+    "stakeholders_detected": false,
+    "stakeholder_count": 1,
+    "champion": null,
+    "other_stakeholders": [],
+    "decision_maker_identified": false,
+    "multi_threading_opportunity": false
+  },
   "relationship_summary": ""
 }
 
@@ -302,7 +310,76 @@ Only describe objectively where the relationship stands and why.
 
 
 =========================
-7. ANALYSIS PRINCIPLES & CONSTRAINTS
+7. STAKEHOLDER MAP (NEW - FOR SYNTHESIS)
+=========================
+
+You MUST scan activities for mentions of OTHER people involved in the deal/relationship.
+
+### WHERE TO FIND STAKEHOLDERS:
+
+| Source | What to Look For |
+|--------|-----------------|
+| metadata.meeting_internal_note | Names mentioned: "Emeline présente", "avec le DAF" |
+| metadata.body | CC recipients, "je mets en copie [name]", "mon collègue [name]" |
+| sender.sender_name | Different senders in activities = different stakeholders |
+| NOTE | Manual notes mentioning colleagues: "Alexis dit que..." |
+
+### STAKEHOLDER ROLES TO DETECT:
+
+| Role | Detection Patterns |
+|------|-------------------|
+| Champion | Most frequent contact, initiates conversations, advocates for us |
+| Decision Maker | "le décideur", "DG", "CEO", "celui qui signe", budget authority mentioned |
+| Technical Evaluator | "DSI", "CTO", "technique", reviews technical aspects |
+| End User | "les équipes", "utilisateurs", mentioned as who will use the product |
+| Blocker | Mentioned negatively: "X n'est pas convaincu", "frein de [name]" |
+
+### OUTPUT FORMAT:
+
+```json
+"stakeholder_map": {
+  "stakeholders_detected": true,
+  "stakeholder_count": 3,
+  "champion": {
+    "name": "André Mooser",
+    "role": "PMO Director",
+    "engagement_level": "high",
+    "source": "primary contact in all activities"
+  },
+  "other_stakeholders": [
+    {
+      "name": "Emeline",
+      "role": "DSI des métiers",
+      "mentioned_in": "MEETING 2025-09-11",
+      "relationship_to_deal": "Technical evaluator",
+      "json_path": "activities[X].metadata.meeting_internal_note"
+    }
+  ],
+  "decision_maker_identified": false,
+  "multi_threading_opportunity": true
+}
+```
+
+### RULES:
+- Set `stakeholders_detected: true` only if >1 distinct person mentioned
+- `engagement_level`: "high" (active), "medium" (mentioned but not engaged), "low" (briefly mentioned)
+- `multi_threading_opportunity`: true if we could engage other stakeholders directly
+
+If only the primary contact is detected:
+```json
+"stakeholder_map": {
+  "stakeholders_detected": false,
+  "stakeholder_count": 1,
+  "champion": null,
+  "other_stakeholders": [],
+  "decision_maker_identified": false,
+  "multi_threading_opportunity": false
+}
+```
+
+
+=========================
+8. ANALYSIS PRINCIPLES & CONSTRAINTS
 =========================
 
 - Evidence-based:

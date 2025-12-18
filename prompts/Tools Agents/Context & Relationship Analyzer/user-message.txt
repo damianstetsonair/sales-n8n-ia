@@ -32,6 +32,14 @@ The JSON object MUST have exactly these keys:
       "description": ""
     }
   ],
+  "stakeholder_map": {
+    "stakeholders_detected": false,
+    "stakeholder_count": 1,
+    "champion": null,
+    "other_stakeholders": [],
+    "decision_maker_identified": false,
+    "multi_threading_opportunity": false
+  },
   "relationship_summary": ""
 }
 

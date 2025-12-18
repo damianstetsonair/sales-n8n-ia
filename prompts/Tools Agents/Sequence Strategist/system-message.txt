@@ -142,72 +142,82 @@ Minimal: 14–21 days.
 Must be >= min_days_between_touches.
 
 touches[]
-sequence_strategy.touches is a LIST of touch objects like:
+sequence_strategy.touches is a LIST of touch objects.
 
-json
-Copier le code
+**UPDATED FORMAT (Compatible with Synthesis Orchestrator):**
+
+```json
 {
-  "touch_number": 1,
+  "step": 1,
   "role": "initial",
+  "trigger": "reevaluation_date",
   "offset_days_from_start": 0,
+  "channel": "email",
   "channel_hint_order": ["EMAIL", "LINKEDIN"],
+  "action_type": "value_share",
   "content_theme": "value_delivery",
+  "status": "ready_to_execute",
   "notes": ""
 }
+```
+
 For each touch:
 
-touch_number:
-
+**step**:
 1 for first touch, 2 for second, etc.
 
-role:
+**role**:
+- "initial" → first touch in a sequence.
+- "follow_up" → intermediate follow-up.
+- "final" → last planned touch.
 
-"initial" → first touch in a sequence.
+**trigger**:
+What causes this touch to execute:
+- "reevaluation_date" → scheduled for specific date
+- "no_response" → triggered if no response to previous touch
+- "event" → triggered by external event (e.g., pilot ending)
+- "manual" → requires manual decision
 
-"follow_up" → intermediate follow-up.
-
-"final" → last planned touch.
-
-offset_days_from_start:
-
-number of days after touch 1 when this touch should occur.
-
+**offset_days_from_start**:
+Number of days after touch 1 when this touch should occur.
 For touch 1 → MUST be 0.
 
-channel_hint_order:
+**channel**:
+Primary channel for this touch (lowercase for Synthesis compatibility):
+- "email", "linkedin", "phone", "whatsapp"
 
-ordered list of preferred channels for this touch, e.g.:
-
-["LINKEDIN", "EMAIL"]
-
-["EMAIL"]
+**channel_hint_order**:
+Ordered list of preferred channels (uppercase):
+- ["LINKEDIN", "EMAIL"]
+- ["EMAIL"]
 
 You do NOT pick the final channel; you give hints:
+- For cold outreach: often ["EMAIL", "LINKEDIN"].
+- For engaged contact: often [same channel as recent conversation] if known.
+- For escalation: may include "PHONE" on later touches.
 
-For cold outreach: often ["EMAIL", "LINKEDIN"].
+**action_type**:
+What type of action this touch represents:
+- "check_in" → light follow-up
+- "follow_up" → standard follow-up
+- "value_share" → share resource/content
+- "break_up" → final message before stopping outreach
 
-For engaged contact: often [same channel as recent conversation] if known.
-
-For escalation: may include "PHONE" on later touches.
-
-content_theme:
-
+**content_theme**:
 High-level theme, one of:
+- "value_delivery" → resource, insight, case study.
+- "problem_focus" → question about their pains/challenges.
+- "social_proof" → reference to similar clients/results.
+- "direct_ask" → clear ask (meeting, next step).
+- "check_in" → light, friendly follow-up / re-engagement.
+- "summary_and_close"→ wrap-up + ask for go/no go.
 
-"value_delivery" → resource, insight, case study.
+**status**:
+- "ready_to_execute" → first touch or ready to send
+- "pending" → scheduled for future execution
+- "conditional" → depends on trigger condition being met
 
-"problem_focus" → question about their pains/challenges.
-
-"social_proof" → reference to similar clients/results.
-
-"direct_ask" → clear ask (meeting, next step).
-
-"check_in" → light, friendly follow-up / re-engagement.
-
-"summary_and_close"→ wrap-up + ask for go/no go.
-
-notes:
-
+**notes**:
 Short comment (1–3 lines) to guide Content Generator and Orchestrator.
 
 exit_conditions

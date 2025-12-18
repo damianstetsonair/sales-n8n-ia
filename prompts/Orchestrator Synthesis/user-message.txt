@@ -17,14 +17,24 @@ Consider these inputs in order of priority:
 2. **Wave 2 actions**: Selected channel, generated content, sequence strategy
 3. **Historical patterns**: What worked before with similar contacts (if examples available)
 4. **Contact context**: Specific situation and communication history
+
+## CRITICAL VALIDATION BEFORE OUTPUT
+Before generating output, verify:
+1. If action="wait" → execute_at MUST have ISO datetime (NOT "Not specified")
+2. If action="wait" → wait_type MUST be populated
+3. opportunity_strength MUST have opportunity_strength_breakdown with matching calculated_total
+4. If sale cycle >30 days OR nurturing → sequence_plan MUST NOT be empty
+5. If POC/Pilot detected → pilot_health MUST be included
+6. If explicit timing agreement in data → explicit_timing_agreement MUST be included
+
 You MUST output valid JSON with this EXACT structure (no markdown, no backticks):
 {
   "orchestrator_id": "orchestrator_synthesis",
   "phase": "synthesis",
   "final_decision": {
     "contact_fullname": "...",
-    "action": "send_message|schedule_call|wait|no_action",
-    "selected_channel": "linkedin|email|whatsapp|phone",
+    "action": "send_message|schedule_call|wait|no_action|break_up",
+    "selected_channel": "linkedin|email|whatsapp|phone|null",
     "selected_content": {
       "message": "...",
       "subject": "..." (only for email),
@@ -32,15 +42,31 @@ You MUST output valid JSON with this EXACT structure (no markdown, no backticks)
       "content_source": "wave2_content_generator"
     },
     "execution_timing": {
-      "execute_at": "ISO8601 datetime",
-      "timezone": "...",
+      "execute_at": "ISO8601 datetime (MANDATORY if timing in reasoning - NEVER 'Not specified')",
+      "reevaluate_at": "ISO8601 datetime (for action=wait, when to re-check)",
+      "timezone": "Europe/Paris",
       "timing_rationale": "..."
+    },
+    "wait_type": {
+      "type": "prospect_timing|prospect_validation|meeting_scheduled|pilot_review|explicit_request|long_cycle|ghosting",
+      "risk_level": "low|medium|high|critical",
+      "trigger_event": "What caused the wait",
+      "reevaluation_trigger": "What should trigger re-evaluation"
     },
     "sequence_instructions": {
       "is_part_of_sequence": true|false,
       "current_step": 1,
       "total_steps": 0,
-      "sequence_plan": []
+      "sequence_plan": [
+        {
+          "step": 1,
+          "trigger": "reevaluation_date|no_response|event|manual",
+          "channel": "email|linkedin|phone|whatsapp",
+          "action_type": "check_in|follow_up|value_share|break_up",
+          "planned_date": "ISO8601 datetime",
+          "status": "ready_to_execute|pending|conditional"
+        }
+      ]
     },
     "rationale": {
       "overall_strategy": "...",
@@ -49,21 +75,40 @@ You MUST output valid JSON with this EXACT structure (no markdown, no backticks)
       "timing_reasoning": "...",
       "sequence_reasoning": "...",
       "historical_alignment": "How this decision aligns with past validated examples (or 'No historical data' if none)",
+      "opportunity_strength": 0.0,
+      "opportunity_strength_breakdown": {
+        "base_score": 0.50,
+        "factors": [
+          {"factor": "factor_name", "impact": "+0.10|-0.10", "evidence": "JSON path or quote"}
+        ],
+        "calculated_total": 0.0
+      },
       "confidence_factors": {
         "relationship_clarity": 0.0,
-        "opportunity_strength": 0.0,
         "channel_certainty": 0.0,
         "content_quality": 0.0,
         "timing_accuracy": 0.0,
         "historical_pattern_match": 0.0
       }
     },
-    "risk_factors": [],
+    "risk_factors": [
+      {"risk": "...", "severity": "low|medium|high", "mitigation": "..."}
+    ],
     "success_criteria": {
       "immediate": "...",
       "short_term": "...",
       "medium_term": "..."
     }
+  },
+  "conditional_context": {
+    "pilot_health": null,
+    "stakeholder_map": null,
+    "explicit_timing_agreement": null,
+    "buying_committee": null,
+    "known_objections": null,
+    "deal_contact_status": null,
+    "competitive_context": null,
+    "buying_process": null
   },
   "metadata": {
     "synthesis_confidence": 0.0,
@@ -72,12 +117,32 @@ You MUST output valid JSON with this EXACT structure (no markdown, no backticks)
       "wave_2": ["channel_selector", "content_generator", "sequence_strategist"]
     },
     "iterations_total": 0,
+    "validation_passed": {
+      "execute_at_populated": true,
+      "wait_type_if_wait": true,
+      "opportunity_breakdown_matches": true,
+      "sequence_plan_if_long_cycle": true,
+      "conditional_structures_applied": true
+    },
     "processing_notes": "..."
   }
 }
+
+## CONDITIONAL CONTEXT RULES
+Include these ONLY when triggers are met (otherwise set to null):
+- pilot_health: When deal contains "pilot|poc|trial" in name or stage
+- stakeholder_map: When >2 distinct people mentioned in activities
+- explicit_timing_agreement: When contact/owner mentioned specific recontact date
+- buying_committee: When champion ≠ decision maker or approval needed
+- known_objections: When objection explicitly mentioned in data
+- deal_contact_status: When deal is closed but contact has value
+- competitive_context: When competition mentioned
+- buying_process: When cycle >3 months with identifiable stages
 
 ⚠️ CRITICAL OUTPUT FORMAT:
 Your response must be PURE JSON only.
 - NO markdown code blocks (no ```)
 - NO text before or after the JSON
 - Start with { and end with }
+- execute_at MUST be ISO8601 datetime if ANY timing exists in reasoning
+- opportunity_strength MUST equal opportunity_strength_breakdown.calculated_total

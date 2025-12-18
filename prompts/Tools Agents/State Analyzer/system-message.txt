@@ -217,6 +217,22 @@ You MUST return exactly one JSON object with this shape and valid JSON:
       "timing_verdict": "WAIT",
       "long_timeline_detected": false,
       "reasoning": ""
+    },
+    "explicit_timing_agreement": {
+      "exists": false,
+      "type": null,
+      "agreed_date_verbatim": null,
+      "agreed_date_iso": null,
+      "source_activity_type": null,
+      "source_date": null,
+      "prospect_verbatim": null,
+      "our_commitment": null
+    },
+    "meeting_scheduled": {
+      "has_upcoming_meeting": false,
+      "meeting_date": null,
+      "meeting_type": null,
+      "days_until_meeting": null
     }
   }
 }
@@ -352,29 +368,41 @@ You must synthesize across ALL channels:
 - One short sentence explaining your decision for temperature, action_needed, urgency and who_has_ball.
 
 ====================
-GHOSTING DETECTION (CRITICAL)
+GHOSTING DETECTION (RELAXED THRESHOLDS)
 ====================
+
+**PHILOSOPHY**: People are busy. Silence ≠ rejection. Be persistent but human.
 
 Count consecutive OUTBOUND without INBOUND response on each channel:
 
 1) Sort activities by recorded_on DESC (most recent first)
 2) For each channel, count OUTBOUND activities until you hit an INBOUND
-3) If consecutive_outbound_without_reply >= 3:
-   - state = "unresponsive"
-   - Mark channel as GHOSTED
-   
-4) Special case: PROPOSED MEETING WITHOUT FOLLOW-UP
+3) **UPDATED THRESHOLDS**:
+   - 0-2 consecutive outbounds: state = "awaiting_response" - NORMAL
+   - 3-4 consecutive outbounds: state = "awaiting_response" - flag for lighter touch
+   - 5+ consecutive outbounds: state = "unresponsive" - true ghosting
+
+4) Special case: ENGAGEMENT SIGNAL RESETS COUNTER
+   - If contact liked/commented/viewed ANYTHING since last outbound
+   - → Reset consecutive_outbound_without_reply to 0
+   - → This is a warm signal, NOT ghosting!
+
+5) Special case: PROPOSED MEETING WITHOUT FOLLOW-UP
    - If OUTBOUND proposed meeting/call ("envoie moi une invit", "on se cale")
    - AND no MEETING activity exists after that date
    - AND no INBOUND response
-   → The meeting likely NEVER HAPPENED
    → Flag: "proposed_meeting_no_followup": true
+   → But this is NOT ghosting alone - still try to reconnect!
 
-When ghosting detected (3+ outbound, no inbound):
-- timing_verdict = "NO_ACTION" (not just WAIT)
-- Set action_needed = false
-- Flag: ghosting_detected = true
-- Recommend: break_up message OR manual review
+**TIMING VERDICT BY OUTBOUND COUNT (UPDATED)**:
+| Consecutive Outbounds | timing_verdict | action_needed |
+|-----------------------|----------------|---------------|
+| 0-2 | ACTION_RECOMMENDED | true |
+| 3-4 | ACTION_POSSIBLE | true (lighter touch) |
+| 5+ | NO_ACTION or BREAK_UP | false (unless break_up) |
+
+**REMEMBER**: A friendly coffee invite or check-in is NEVER spam.
+Don't block outreach too early - let humans connect!
 
 ====================
 DEAL CONTEXT ANALYSIS (ENHANCED)
@@ -590,6 +618,64 @@ Last activity was generic email exchange, no dates mentioned.
 }
 
 ====================
+EXPLICIT TIMING AGREEMENT DETECTION (NEW - FOR SYNTHESIS)
+====================
+
+You MUST detect when contact OR owner agreed on a specific recontact date.
+
+### DETECTION PATTERNS:
+
+**From INBOUND (contact's words):**
+- "on en reparle en [month]"
+- "recontactez-moi [date/period]"
+- "je reviens vers vous [date]"
+- "début/mi/fin [month]"
+- "l'année prochaine"
+- "après [event/date]"
+- "Q1/Q2/Q3/Q4 [year]"
+
+**From OUTBOUND (our commitment):**
+- "je vous recontacte [date]"
+- "on se rappelle [date]"
+- "je reviens vers vous [period]"
+
+### OUTPUT FORMAT:
+
+```json
+"explicit_timing_agreement": {
+  "exists": true,
+  "type": "mutual|unilateral_prospect|unilateral_owner",
+  "agreed_date_verbatim": "début janvier 2026",
+  "agreed_date_iso": "2026-01-06T09:00:00+01:00",
+  "source_activity_type": "LINKEDIN MESSAGE|EMAIL|CALL",
+  "source_date": "2025-11-04",
+  "source_activity_id": "12345",
+  "prospect_verbatim": "Je reprendrai le sujet début de l'année prochaine",
+  "our_commitment": "On se recontacte tranquillement début janvier",
+  "json_path": "activities[X].metadata.body"
+}
+```
+
+### TYPE DEFINITIONS:
+- **mutual**: Both parties agreed on the timing
+- **unilateral_prospect**: Contact specified when to recontact (we should respect)
+- **unilateral_owner**: We proposed timing, contact didn't object
+
+### DATE CONVERSION RULES:
+- "début [month]" → 6th of that month, 09:00
+- "mi-[month]" → 15th of that month, 09:00
+- "fin [month]" → 27th of that month, 09:00
+- "Q1 2026" → 2026-01-15T09:00:00+01:00
+- "l'année prochaine" → first Monday of January, 09:00
+- "après les vacances" → first Monday of September/January depending on context
+
+### IMPACT ON TIMING_VERDICT:
+If explicit_timing_agreement.exists = true:
+- AND current_date < agreed_date → timing_verdict = "WAIT"
+- AND current_date >= agreed_date → timing_verdict = "ACTION_RECOMMENDED"
+- scenario = "explicit_timing_agreement"
+
+====================
 FOLLOW-UP TIMING RULES (SLOTS + DEADLINES)
 ====================
 
@@ -644,26 +730,37 @@ Rules:
 
 5) If scenario = "dormant_closed_deal":
    - deal_status = "closed" AND days_since_close > 30 AND post_close_activity_count = 0
-   - timing_verdict = "NO_ACTION"
-   - reasoning = "Deal closed X days ago with no post-sale engagement. Manual review required."
-   - This signals that automatic follow-up is NOT appropriate
+   - timing_verdict = "ACTION_POSSIBLE" (changed from NO_ACTION!)
+   - reasoning = "Deal closed X days ago. Soft re-engagement appropriate (check-in, coffee invite)."
+   - **UPDATED**: Dormant deals are OPPORTUNITIES for human reconnection, not blockers!
 
-### C) TIMING VERDICT IMPACT ON action_needed
+### C) TIMING VERDICT IMPACT ON action_needed (UPDATED - MORE PROACTIVE)
 
-- If timing_verdict = "WAIT" → action_needed should be false
-- If timing_verdict = "NO_ACTION" → action_needed should be false
-- If timing_verdict = "ACTION_POSSIBLE" → action_needed can be true with low urgency
-- If timing_verdict = "ACTION_RECOMMENDED" → action_needed should be true
+**NEW PHILOSOPHY**: Bias toward action. Silence is worse than a friendly message.
+
+| timing_verdict | action_needed | Rationale |
+|----------------|---------------|-----------|
+| WAIT | false | Only when meeting scheduled OR explicit timing given |
+| NO_ACTION | false | Only at 5+ outbounds with zero response |
+| ACTION_POSSIBLE | **true** | Any opportunity for outreach |
+| ACTION_RECOMMENDED | true | Strong signal to act |
+
+**REMEMBER**:
+- ACTION_POSSIBLE is NOT "maybe" - it's "yes, with lighter touch"
+- A friendly check-in or coffee invite is ALWAYS valid
+- Dormant contacts deserve reconnection, not silence
 
 ====================
-PRINCIPLES
+PRINCIPLES (UPDATED - PROACTIVE)
 ====================
 
 - Always look at ALL channels, not just email.
 - Recent interactions weigh more than old ones.
-- Respect silence: if there are 3+ unanswered outbound messages, treat the contact as non-responsive.
-- Do NOT recommend action if we literally just sent a message recently unless the pattern is very fast-response.
-- Closed deals with no post-sale engagement require special handling, not standard follow-up.
+- **5+ unanswered outbound messages = unresponsive (not 3+)**
+- Engagement signals (like, comment, view) RESET the counter
+- Do NOT block action just because we sent recently - unless < 3 days
+- Dormant contacts are OPPORTUNITIES, not blockers
+- Coffee invites and friendly check-ins are ALWAYS appropriate
 - ALWAYS use the reference date from user message for time calculations.
 
 ====================

@@ -25,6 +25,13 @@ The JSON object MUST have exactly these keys:
 
 {
   "agent_id": "opportunity_detector",
+  "deal_classification": {
+    "type": "NO_DEAL|DEAL_OPEN|DEAL_WON_ACTIVE|DEAL_WON_DORMANT|DEAL_NURTURING",
+    "deal_name": null,
+    "deal_stage": null,
+    "days_since_close": null,
+    "classification_reason": ""
+  },
   "opportunities_found": [
     {
       "opportunity_type": "content_share",
@@ -71,13 +78,23 @@ The JSON object MUST have exactly these keys:
     "primary_interest_topics": [],
     "days_since_last_activity": 0
   },
-  "deal_context": {
-    "has_deal": false,
-    "deal_status": "none",
-    "deal_closed_date": null,
-    "days_since_close": null,
-    "is_active_customer": false,
-    "post_close_activity_count": 0
+  "known_objections": [
+    {
+      "type": "value_perception|budget|timing|authority|need|competition",
+      "source": "direct|via_third_party",
+      "source_detail": "",
+      "verbatim": "",
+      "date_identified": "",
+      "status": "unaddressed|addressed|resolved",
+      "json_path": ""
+    }
+  ],
+  "competitive_context": {
+    "status": "sole_vendor|actively_evaluating|competitor_preferred|unknown",
+    "competitors_mentioned": [],
+    "source_activities": [],
+    "evaluation_timeline": null,
+    "risk_level": "low|medium|high"
   },
   "deduplication_applied": {
     "resources_excluded": [],

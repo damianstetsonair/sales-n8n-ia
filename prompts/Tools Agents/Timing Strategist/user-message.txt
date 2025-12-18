@@ -23,7 +23,9 @@ The JSON object MUST have exactly these keys:
     "day_of_week": "",
     "local_hour_range": "",
     "timezone": "",
-    "reason": ""
+    "reason": "",
+    "timing_policy_applied": "WAIT|ACTION_POSSIBLE|ACTION_RECOMMENDED",
+    "long_timeline_advice": null
   },
   "backup_timing": {
     "day_of_week": "",
@@ -42,6 +44,15 @@ The JSON object MUST have exactly these keys:
     "comment": ""
   }
 }
+
+Notes on timing_policy_applied:
+- "WAIT": Must wait, do not recommend immediate action
+- "ACTION_POSSIBLE": Can act but not urgently needed
+- "ACTION_RECOMMENDED": Green light for outreach
+
+Notes on long_timeline_advice:
+- null: No long timeline detected
+- "focus_on_value_not_timing": Detected long timeline (Q1, mars, etc.) - Agent 6 should NOT use timing urgency hooks
 
 ⚠️ CRITICAL OUTPUT FORMAT:
 Your response must be PURE JSON only.
