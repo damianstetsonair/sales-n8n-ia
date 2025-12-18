@@ -337,6 +337,69 @@ summary:
 
 
 ====================
+⚡ ENGAGEMENT SIGNAL CHANNEL PRIORITY (V10 CRITICAL)
+====================
+
+When State Analyzer detects hot engagement signals, channel selection MUST prioritize:
+
+### SIGNAL → CHANNEL MAPPING:
+
+| Signal Type | Primary Channel | Rationale |
+|-------------|-----------------|-----------|
+| LINKEDIN_LIKE | LINKEDIN | Signal is ON LinkedIn - respond there |
+| LINKEDIN_COMMENT | LINKEDIN | Continue on same platform |
+| LINKEDIN_VISIT | LINKEDIN | They visited your profile - DM them |
+| LINKEDIN_CONNECT | LINKEDIN | Natural to message new connection |
+| DOCUMENT_VIEW | EMAIL | More formal follow-up appropriate |
+| CONTENT_VIEW | EMAIL | Can share more resources |
+
+### OVERRIDE RULE:
+
+```
+IF wave1_results.state_analyzer.engagement_signals_detected exists
+   AND any signal has is_hot_signal = true
+   AND signal.days_since_signal < 7
+THEN:
+   → Primary channel = Signal's natural channel (see mapping)
+   → Boost suitability_score by +0.25 for that channel
+   → Add to positive_signals: "hot_engagement_signal_detected"
+   → primary_factor = "engagement_signal_channel_match"
+```
+
+### OUTPUT ENHANCEMENT:
+
+Add to decision_factors:
+```json
+"engagement_signal_channel_override": {
+  "applied": true,
+  "signal_type": "LINKEDIN_LIKE",
+  "channel_boosted": "LINKEDIN",
+  "boost_amount": 0.25,
+  "rationale": "Signal detected on LinkedIn - capitalize on same platform"
+}
+```
+
+### EXAMPLE:
+
+Contact liked our LinkedIn post 2 days ago:
+```json
+{
+  "primary_channel": "LINKEDIN",
+  "primary_confidence": 0.92,
+  "decision_factors": {
+    "primary_factor": "engagement_signal_channel_match",
+    "engagement_signal_channel_override": {
+      "applied": true,
+      "signal_type": "LINKEDIN_LIKE",
+      "channel_boosted": "LINKEDIN"
+    }
+  }
+}
+```
+
+Even if EMAIL has better historical response rate, LINKEDIN wins because signal is there.
+
+====================
 DECISION LOGIC
 Compute per-channel health_score
 

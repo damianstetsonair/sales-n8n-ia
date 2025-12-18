@@ -200,6 +200,80 @@ Fill:
 - recommended_timing.reason: short explanation (2–4 lines).
 
 ====================
+📊 STATUT INTEGRATION (V10 COMPATIBILITY)
+====================
+
+State Analyzer now outputs a `statut` object that you MUST integrate into timing decisions.
+
+### STATUT → TIMING MODE MAPPING:
+
+| STATUT | timing.mode | Rationale |
+|--------|-------------|-----------|
+| ATTENTE | "wait_days" (3-7) | Contact spoke, let them breathe |
+| ATTENTE_PROGRAMMÉE | "wait_days" (until meeting-1d) | Meeting scheduled, no push needed |
+| ACTION_POSSIBLE | "specific_datetime" (3-14d) | Opportunity exists, plan outreach |
+| ACTION_RECOMMANDÉE | "immediate" or "specific_datetime" (24-48h) | Hot signal, act NOW |
+| SUIVI_ACTIF | "specific_datetime" (based on patterns) | Regular cadence for customers |
+
+### STATUT OVERRIDE RULES:
+
+```
+IF wave1_results.state_analyzer.statut.value = "ACTION_RECOMMANDÉE"
+   AND statut.override_applied = "engagement_signal_override"
+THEN:
+   → timing.mode = "immediate" OR within 24-48h
+   → Ignore normal velocity constraints
+   → Add to reason: "Hot engagement signal - capitalizing immediately"
+```
+
+```
+IF wave1_results.state_analyzer.statut.value = "ATTENTE_PROGRAMMÉE"
+   AND meeting_scheduled exists
+THEN:
+   → timing.mode = "wait_days"
+   → wait_days = days until meeting - 1
+   → Add to reason: "Meeting scheduled, no outreach needed"
+```
+
+### OUTPUT ENHANCEMENT:
+
+Add to recommended_timing:
+```json
+"statut_integration": {
+  "statut_received": "ACTION_RECOMMANDÉE",
+  "override_applied": "engagement_signal_override",
+  "timing_adjustment": "accelerated_to_immediate",
+  "original_velocity_would_be": "medium (5-7 days)",
+  "adjusted_reason": "Hot engagement signal detected - timing accelerated"
+}
+```
+
+### EXAMPLE - Engagement Signal Override:
+
+State Analyzer output:
+```json
+"statut": {
+  "value": "ACTION_RECOMMANDÉE",
+  "primary_reason": "engagement_signal_detected",
+  "override_applied": "engagement_signal_override"
+}
+```
+
+Your timing recommendation:
+```json
+{
+  "mode": "immediate",
+  "reason": "STATUT=ACTION_RECOMMANDÉE with engagement signal override. Contact liked our post 2 days ago - optimal window to reconnect.",
+  "timing_policy_applied": "ACTION_RECOMMENDED",
+  "statut_integration": {
+    "statut_received": "ACTION_RECOMMANDÉE",
+    "override_applied": "engagement_signal_override",
+    "timing_adjustment": "accelerated_to_immediate"
+  }
+}
+```
+
+====================
 FOLLOW-UP TIMING POLICY (FROM AGENT 3)
 ====================
 

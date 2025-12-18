@@ -33,6 +33,57 @@ You are working with REAL CRM data. The JSON above contains EVERYTHING you know 
 
 ---
 
+## 🎯 STEP -1: CONSUME WAVE 1 RESULTS (V10 CRITICAL - DO FIRST)
+
+The JSON may contain `wave1_results` with pre-analyzed data. **USE IT FIRST!**
+
+### A) CHECK FOR ENGAGEMENT SIGNALS (PRIORITY 1)
+Look for: `wave1_results.state_analyzer.engagement_signals_detected[]`
+
+If found:
+```
+FOR EACH signal in engagement_signals_detected:
+  IF signal.is_hot_signal = true AND signal.days_ago < 7:
+    → USE signal.hook_for_content_generator as PRIMARY HOOK
+    → Example: "J'ai vu que tu as consulté notre doc sécurité - as-tu des questions?"
+```
+
+### B) CHECK FOR HOOKS FROM OPPORTUNITY DETECTOR (PRIORITY 2)
+Look for: `wave1_results.opportunity_detector.hooks_detected[]`
+
+If found:
+```
+SELECT best hook based on:
+  1. hook_age_category = "fresh" (0-14 days) → Direct reference
+  2. hook_age_category = "recent" (15-60 days) → Direct reference
+  3. hook_age_category = "old" (61-120 days) → Acknowledge gap
+  4. hook_age_category = "stale" (120+ days) → New angle needed
+
+USE hook_recommendation.suggested_hook_text if provided
+```
+
+### C) CHECK RELATIONSHIP CONTEXT (PRIORITY 3)
+Look for: `wave1_results.context_relationship_analyzer`
+
+Use to determine:
+- relationship_stage → Tone and formality
+- trajectory → Growing = be proactive, Declining = be gentle
+
+### D) CHECK STATUT FROM STATE ANALYZER (PRIORITY 4)
+Look for: `wave1_results.state_analyzer.statut.value`
+
+| STATUT | Content Approach |
+|--------|-----------------|
+| ACTION_RECOMMANDÉE | Capitalize on hot signal immediately |
+| ACTION_POSSIBLE | Standard outreach with value |
+| SUIVI_ACTIF | Customer check-in tone |
+| ATTENTE | Light touch only |
+| ATTENTE_PROGRAMMÉE | No generation needed |
+
+**IF wave1_results is NOT present:** Fall back to analyzing activities[] directly (legacy mode).
+
+---
+
 ## STEP 0: CRITICAL CHECKS (DO FIRST)
 
 ### A) DEAL STATUS CHECK
@@ -240,6 +291,21 @@ Generate exactly ONE valid JSON object with this structure, no greetings, no wor
     "possible_direction_inversion": false,
     "affected_activity_ids": [],
     "reason": null
+  },
+  "wave1_consumption": {
+    "engagement_signal_used": {
+      "used": true,
+      "signal_type": "DOCUMENT_VIEW",
+      "hook_text_used": "J'ai vu que tu as consulté notre doc sécurité...",
+      "source_path": "wave1_results.state_analyzer.engagement_signals_detected[0]"
+    },
+    "opportunity_hook_used": {
+      "used": false,
+      "hook_id": null,
+      "reason": "engagement_signal_took_priority"
+    },
+    "statut_received": "ACTION_RECOMMANDÉE",
+    "content_approach_applied": "capitalize_on_hot_signal"
   },
   "quality_self_assessment": {
     "historical_mistakes_avoided": ["old_hook_as_recent", "wrong_signature"],

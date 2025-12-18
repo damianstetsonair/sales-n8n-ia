@@ -15,6 +15,32 @@ Call these three tools IN ORDER:
 2. **Content Generator** - Pass Wave 1 results + Channel output
 3. **Sequence Strategist** - Pass Wave 1 results + previous outputs
 
+### ⚠️ CRITICAL: PASS WAVE 1 DATA TO TOOLS
+
+When calling each Wave 2 tool, you MUST include `wave1_results` in the input JSON.
+
+**Content Generator specifically needs:**
+- `wave1_results.state_analyzer.engagement_signals_detected[]` - Hot signals to capitalize on
+- `wave1_results.state_analyzer.statut` - Determines content approach
+- `wave1_results.opportunity_detector.hooks_detected[]` - Pre-identified hooks with age
+- `wave1_results.opportunity_detector.hook_recommendation` - Suggested hook text
+- `wave1_results.context_relationship_analyzer` - Relationship stage for tone
+
+Example tool call structure:
+```json
+{
+  "contact_context": { ... original contact data ... },
+  "wave1_results": {
+    "state_analyzer": { ... full output ... },
+    "opportunity_detector": { ... full output ... },
+    "context_relationship_analyzer": { ... full output ... },
+    "timing_strategist": { ... full output ... }
+  }
+}
+```
+
+This ensures Content Generator can use pre-analyzed engagement signals and hooks.
+
 ---
 
 ## PHASE 2: EVALUATE & DECIDE
@@ -30,6 +56,90 @@ After calling all tools:
 - Did Channel Selector provide a valid channel?
 - Did Content Generator produce content for recommended channel?
 - Does Sequence plan align with relationship stage?
+
+### ⚠️ VALUE DENSITY VALIDATION (CRITICAL FOR RE-ENGAGEMENT)
+
+When evaluating wave2_results.content_generator output:
+
+```
+IF wave1_results.opportunity_detector.opportunities_found[].opportunity_type = "re_engagement"
+   AND wave2_results.content_generator.quality_self_assessment.value_density_score.score < 0.50
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "high",
+       "issue": "Re-engagement message lacks value density",
+       "detail": "Message only asks questions without offering resources, insights, or concrete next steps",
+       "resolution": "Retry content_generator with explicit instruction to include value"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.content_generator = "Regenerate message with mandatory value element. Use highest-scoring resource from related_resources_to_offer or add physical meeting offer based on proximity."
+```
+
+**ADD to strengths_found when value is present:**
+- "Message includes concrete value offer (resource/insight/meeting)"
+- "Value bridge pattern correctly used to connect pain point to offer"
+- "Proximity opportunity leveraged with physical meeting offer"
+
+### ⚠️ RESOURCE QUALITY VALIDATION (V11 - CRITICAL)
+
+When evaluating wave1_results.opportunity_detector output:
+
+```
+CHECK 1: related_resources_to_offer quality
+IF wave1_results.opportunity_detector.related_resources_to_offer is NOT empty:
+   FOR EACH resource in related_resources_to_offer:
+      - Verify match_score >= 0.35 (minimum threshold)
+      - Verify match_score_breakdown exists and factors sum correctly
+      - Verify hook_connection.connected_hook_id exists in hooks_detected[]
+      - Verify suggested_intro_phrase is not generic
+
+   IF any resource has match_score < 0.35:
+      - Add to issues_found:
+        {
+          "severity": "medium",
+          "issue": "Low-quality resource recommendation included",
+          "detail": "Resource [id] has match_score [X] below 0.35 threshold",
+          "resolution": "Remove low-scoring resources or retry with better matching"
+        }
+
+CHECK 2: primary_resource_recommendation consistency
+IF primary_resource_recommendation.resource_id is NOT null:
+   - Verify it exists in related_resources_to_offer[]
+   - Verify it has the highest match_score among all resources
+   - Verify alternative_if_rejected is different from primary
+
+   IF primary not in related_resources_to_offer:
+      - Add to issues_found:
+        {
+          "severity": "high",
+          "issue": "Primary resource recommendation inconsistent",
+          "detail": "primary_resource_recommendation.resource_id not found in related_resources_to_offer",
+          "resolution": "Retry opportunity_detector with instruction to fix resource consistency"
+        }
+      - Set evaluation_decision.action = "retry"
+      - Set retry_instructions.opportunity_detector = "Ensure primary_resource_recommendation.resource_id matches highest-scoring resource in related_resources_to_offer"
+
+CHECK 3: resource_gap_detected handling
+IF resource_gap_detected.gap_exists = true:
+   - Verify content_generator_instruction is not empty
+   - Verify unmatched_pain_points[] has at least one entry
+   - Verify suggested_alternative_approach is actionable
+
+   IF gap_exists but no alternative approach:
+      - Add to issues_found:
+        {
+          "severity": "medium",
+          "issue": "Resource gap detected without alternative",
+          "detail": "Gap identified but no suggested_alternative_approach provided",
+          "resolution": "Provide concrete alternative (meeting, demo, call)"
+        }
+```
+
+**ADD to strengths_found when resource matching is good:**
+- "Resource recommendations well-matched to detected hooks (avg match_score >= 0.60)"
+- "Primary resource correctly selected with clear selection_reason"
+- "Resource gap properly identified with actionable alternative"
 
 ---
 

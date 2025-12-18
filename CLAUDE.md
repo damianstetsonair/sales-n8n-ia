@@ -63,6 +63,167 @@ WAVE 3: SYNTHESIS
 └── Final recommendation with channel, content, timing
 ```
 
+## V10.0 Decision Pipeline Stages
+
+The multi-agent system follows a structured decision pipeline inspired by V10.0 algorithm:
+
+### Stage 1: ANÁLISIS CRONOLÓGICO (State Analyzer)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1️⃣  Sort activities[] by recorded_on DESC                       │
+│ 2️⃣  Find last INBOUND (filter direction="INBOUND")              │
+│ 3️⃣  Find last OUTBOUND (filter direction="OUTBOUND")            │
+│ 4️⃣  Compare timestamps → Determine "most_recent"                │
+│ 5️⃣  Calculate days_since_last_contact from reference_date       │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: chronology_verification, last_inbound, last_outbound
+```
+
+### Stage 2: CLASIFICACIÓN DE DEALS (Opportunity Detector)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Check deal existence → activities[].deals[]                     │
+│                                                                 │
+│ Classification Logic:                                           │
+│ ├─ NO deals found → NO_DEAL → "Lead"                           │
+│ ├─ Name contains "nurturing/lost/perdu" → DEAL_NURTURING       │
+│ ├─ closed_date > today or NULL → DEAL_OPEN → "Prospect"        │
+│ └─ closed_date < today:                                         │
+│    ├─ post_close_activity in 90d → DEAL_WON_ACTIVE             │
+│    └─ no post_close_activity → DEAL_WON_DORMANT                │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: deal_classification, evidences_type
+```
+
+### Stage 3: CLASIFICACIÓN DE INBOUND (State Analyzer)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ CONVERSATIONAL (triggers ATTENTE):                              │
+│ ├─ EMAIL (INBOUND)                                              │
+│ ├─ CALL (INBOUND)                                               │
+│ └─ LINKEDIN MESSAGE (INBOUND)                                   │
+│                                                                 │
+│ ENGAGEMENT_SIGNAL (triggers ACTION_RECOMMANDÉE):                │
+│ ├─ LINKEDIN LIKE/REACTION                                       │
+│ ├─ LINKEDIN COMMENT                                             │
+│ ├─ LINKEDIN VISIT PROFILE                                       │
+│ ├─ LINKEDIN CONNECT                                             │
+│ ├─ DOCUMENT VIEW                                                │
+│ └─ CONTENT VIEW                                                 │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: last_inbound_classification, engagement_signals_detected
+```
+
+### Stage 4: VERIFICACIONES TOP PRIORITY (State Analyzer + Opportunity Detector)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ ⚠️  BLOCKING CHECKS (must resolve before proceeding):           │
+│                                                                 │
+│ ├─ Séquence ouverte? (< 14 days + topic + no closure)          │
+│ │   → Stay on topic, don't change subject                      │
+│ │                                                               │
+│ ├─ Meeting scheduled? (has_upcoming_meeting = true)            │
+│ │   → ATTENTE_PROGRAMMÉE, no outreach needed                   │
+│ │                                                               │
+│ ├─ Explicit timing agreement? (contact said "recontactez en X")│
+│ │   → Respect agreed date                                       │
+│ │                                                               │
+│ ├─ Boucle non fermée? (unfulfilled promise, unanswered question)│
+│ │   → Address this FIRST before anything else                  │
+│ │                                                               │
+│ └─ Date coherence? (no "bonne année" in December, etc.)        │
+│     → Validate temporal references in content                   │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: conversation_scan, meeting_scheduled, explicit_timing_agreement
+```
+
+### Stage 5: DETERMINACIÓN DE STATUT (State Analyzer → Synthesis)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STATUT Decision Tree:                                           │
+│                                                                 │
+│ Has upcoming meeting?                                           │
+│ └─ YES → ATTENTE_PROGRAMMÉE                                    │
+│                                                                 │
+│ Last = INBOUND CONVERSATIONAL?                                  │
+│ └─ YES → ATTENTE                                               │
+│                                                                 │
+│ Last = ENGAGEMENT SIGNAL? ⚡                                    │
+│ └─ YES → ACTION_RECOMMANDÉE (capitalize immediately!)          │
+│                                                                 │
+│ Créneaux proposés sans réponse?                                │
+│ ├─ < 48h → ATTENTE                                             │
+│ ├─ 48-72h → ACTION_POSSIBLE                                    │
+│ └─ > 72h → ACTION_RECOMMANDÉE                                  │
+│                                                                 │
+│ Last OUTBOUND X days ago?                                       │
+│ ├─ < 3 days → ATTENTE                                          │
+│ ├─ 3-14 days → ACTION_POSSIBLE                                 │
+│ └─ > 14 days → ACTION_RECOMMANDÉE                              │
+│                                                                 │
+│ Consecutive outbounds?                                          │
+│ ├─ 0-2 → Normal flow                                           │
+│ ├─ 3-4 → ACTION_POSSIBLE (lighter touch)                       │
+│ └─ 5+ → NO_ACTION or BREAK_UP                                  │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: statut.value, statut.primary_reason, timing_verdict
+```
+
+### Stage 6: DECISIÓN DE STATUS → ACTION (Synthesis)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STATUT → ACTION Mapping:                                        │
+│                                                                 │
+│ ATTENTE            → action="wait"                              │
+│ ATTENTE_PROGRAMMÉE → action="wait" (meeting_scheduled)         │
+│ ACTION_POSSIBLE    → action="send_message" (lighter touch)      │
+│ ACTION_RECOMMANDÉE → action="send_message" (priority)           │
+│ SUIVI_ACTIF        → action="send_message" (customer success)   │
+│                                                                 │
+│ ⚡ ENGAGEMENT SIGNAL OVERRIDE:                                  │
+│ If hot signal detected (< 7 days):                              │
+│ → FORCE action="send_message"                                   │
+│ → urgency="high" or "critical"                                  │
+│ → Use signal as primary hook                                    │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: action, urgency, engagement_signal_processing
+```
+
+### Stage 7: GENERACIÓN DE SALIDA (Content Generator + Synthesis)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ If action="send_message":                                       │
+│ ├─ Select channel (Channel Selector recommendation)            │
+│ ├─ Get content (Content Generator output EXACTLY)              │
+│ ├─ Set execute_at (Timing Strategist window)                   │
+│ └─ Build sequence_plan if applicable                           │
+│                                                                 │
+│ If action="wait":                                               │
+│ ├─ Set wait_type (MANDATORY)                                   │
+│ ├─ Set reevaluate_at date                                      │
+│ └─ Build sequence_plan for follow-up                           │
+│                                                                 │
+│ ALWAYS include:                                                 │
+│ ├─ opportunity_strength_breakdown (with evidence)              │
+│ ├─ confidence_factors (from all agents)                        │
+│ ├─ evidence_trail (json_path for each claim)                   │
+│ └─ risk_factors + success_criteria                             │
+└─────────────────────────────────────────────────────────────────┘
+OUTPUT: final_decision (complete JSON structure)
+```
+
+### Agent Responsibility Matrix (V10.0 Stages)
+
+| V10.0 Stage | Primary Agent | Supporting Agents |
+|-------------|---------------|-------------------|
+| Análisis Cronológico | State Analyzer | - |
+| Clasificación Deals | Opportunity Detector | - |
+| Clasificación INBOUND | State Analyzer | - |
+| Verificaciones TOP | State Analyzer | Opportunity Detector |
+| Determinación STATUT | State Analyzer | Synthesis |
+| Decisión Action | Synthesis | All Wave 1 agents |
+| Generación Salida | Synthesis | Content Generator, Channel Selector |
+
 ## Key Concepts
 
 ### Deal Classification
@@ -293,10 +454,35 @@ System is bilingual (French/English) - agents detect and adapt to contact's lang
 - All confidence scores required
 - Evidence trail for every claim
 
-## Proactive Outreach Philosophy (v3.0)
+## 🚀 Filosofía Comercial Proactiva (v4.0)
 
-### Core Mindset
-**Default is ACTION, not WAITING.** Silence is worse than a friendly message.
+### Mentalidad Central
+**SOMOS VENDEDORES, NO ROBOTS DE CRM.**
+
+Nuestro trabajo NO es encontrar excusas para no contactar. Es **MANTENER RELACIONES VIVAS** y **GENERAR OPORTUNIDADES DE VENTA**.
+
+### Principios Fundamentales
+
+1. **LA CERCANÍA VENDE**
+   - Un "¿cómo estás?" genuino > 10 emails de producto
+   - Proponer café/desayuno SOLO si el contacto está en PARIS
+   - Preguntar por sus proyectos y problemas REALES
+
+2. **BUSCAR REUNIONES SIEMPRE**
+   - Objetivo final = VERSE CARA A CARA (si París) o CALL/VISIO (si no)
+   - Cada mensaje debe abrir la puerta a una reunión
+   - "¿Tomamos un café?" solo para contactos en París
+   - "¿Un call de 15 min?" para contactos fuera de París
+
+3. **RETOMAR PROBLEMAS CONVERSADOS**
+   - Si mencionaron un problema → "¿Cómo van con X?"
+   - Si tuvieron una demo → "¿Qué tal les fue implementando Y?"
+   - Si hubo interés → "Me acordé de ustedes viendo Z"
+
+4. **ENGAGEMENT = ACCIÓN INMEDIATA**
+   - Like en LinkedIn → Mensaje EN EL MOMENTO
+   - Visita perfil → "Vi que pasaste, ¿hablamos?" (café solo si París)
+   - Vio documento → "¿Te quedaron dudas?"
 
 ### Ghosting Thresholds (UPDATED)
 | Consecutive Outbounds | Action |
@@ -307,20 +493,140 @@ System is bilingual (French/English) - agents detect and adapt to contact's lang
 
 **Engagement signals (like, comment, view) RESET the counter.**
 
-### New Opportunity Types
-- `coffee_catch_up`: Propose café/desayuno for contacts with history
-- `friendly_check_in`: "Comment ça va" approach for 30-90 days silence
-- `social_signal_response`: Capitalize on likes/comments/profile visits immediately
+### Tipos de Mensaje Prioritarios
+- `coffee_catch_up`: Proponer café/desayuno SOLO SI contacto en París
+- `problem_follow_up`: "¿Cómo van con [problema que mencionaron]?"
+- `friendly_check_in`: "Comment ça va" para 30-90 días de silencio
+- `social_signal_response`: Capitalizar likes/comments/visits INMEDIATAMENTE
+- `meeting_request`: Propuesta concreta de reunión con días/horarios (call si no París)
 
-### Message Tone: Human Connection First
-- Propose coffee/breakfast when in same city
-- "J'ai pensé à toi en voyant..." for warm reconnection
-- "Comment ça se passe chez [company]?" shows genuine interest
-- Less sales pitch, more friendly colleague energy
+### Tono de Mensajes: Conexión Humana Primero
+- Proponer café/desayuno SOLO si contacto está en París
+- Para otros: proponer call/visio
+- "J'ai pensé à toi en voyant..." para reconexión cálida
+- "Comment ça se passe chez [company]?" muestra interés genuino
+- "¿Cómo vienen con [problema]?" demuestra que escuchaste
 
-### When to Generate (ALWAYS, except...)
-Generate content for ANY contact with history, UNLESS:
-1. Meeting already scheduled
-2. Contact explicitly said "contact me on [date]"
-3. 5+ outbounds with ZERO response
-4. Contact explicitly opted out
+### Regla de Ubicación para Reuniones
+| contact_info.location | Tipo de reunión |
+|----------------------|-----------------|
+| Contiene "Paris" | café, breakfast, en persona |
+| Otra ciudad o desconocido | call, visio |
+
+Menos pitch de ventas, más energía de colega amigable.
+
+### Cuándo Generar Contenido (SIEMPRE, excepto...)
+Generar contenido para CUALQUIER contacto con historia, A MENOS QUE:
+1. Reunión ya agendada (fecha confirmada)
+2. Contacto dijo explícitamente "contáctame en [fecha]"
+3. 5+ outbounds con CERO respuesta
+4. Contacto explícitamente pidió no ser contactado
+
+### Pregunta Clave Antes de Decidir
+> "Si este fuera MI mejor cliente y no le he hablado en 30 días, ¿le escribiría?"
+> La respuesta es SÍ. Siempre.
+
+## 🎁 Value Density System (v5.0)
+
+### Regla de Valor Obligatorio para Re-engagement
+Cuando hook_age_days > 90 Y es re-engagement, el mensaje DEBE incluir al menos UNO de:
+1. **RESOURCE**: Recurso de `related_resources_to_offer`
+2. **INSIGHT**: Insight de industria relevante a sus pain points
+3. **PRODUCT_UPDATE**: Nueva feature que responde a sus necesidades
+4. **CONCRETE_OFFER**: Oferta de reunión física (solo si París)
+
+### Value Density Score
+El Content Generator calcula un score de densidad de valor:
+
+| Factor | Puntos |
+|--------|--------|
+| has_resource_or_insight | +0.30 |
+| has_concrete_next_step | +0.20 |
+| references_specific_pain_point | +0.20 |
+| has_proximity_offer (Paris) | +0.15 |
+| uses_value_bridge_pattern | +0.15 |
+| only_asks_question_no_offer | -0.40 |
+
+**Veredictos:**
+- Score >= 0.50: PASS
+- Score < 0.50 AND hook_age > 90d: FAIL_REGENERATE
+- Score < 0.50 AND hook_age <= 90d: PASS_WITH_WARNING
+
+### Template RE-ENGAGEMENT WITH VALUE (hooks > 60 días)
+```
+ESTRUCTURA OBLIGATORIA:
+1. ACKNOWLEDGE_GAP - "Cela fait plusieurs mois..."
+2. REFERENCE_SPECIFIC_CONTEXT - Personas/temas específicos
+3. VALUE_BRIDGE - "Je pensais à vous en voyant..."
+4. VALUE_OFFER - Recurso/insight/update concreto
+5. SOFT_ASK - Pregunta sobre su situación
+6. CONCRETE_NEXT_STEP - Café (si París) o call
+7. SIGNATURE
+```
+
+### Anti-patrones (NO VALOR)
+❌ "Je me permets de vous recontacter"
+❌ "Je voulais prendre de vos nouvelles"
+❌ "Si vous avez des questions"
+❌ Mensajes que solo preguntan sin ofrecer nada
+
+### Patrones de Valor (SÍ)
+✅ "On vient de sortir [resource] qui répond à [pain point]"
+✅ "Je pensais à vous en voyant [trend]"
+✅ "On a sorti [feature] depuis notre échange"
+✅ "Je suis souvent sur Paris, un café serait plus simple"
+
+## 📚 Resource Matching System (v11)
+
+### Resource Catalog
+Opportunity Detector mantiene un catálogo de recursos con:
+- Videos (quarter_plan_video, project_brief_ai_video, security_overview_video)
+- Ebooks & Guides (ebook_why_quarter_plan, guide_ppm_pilotage, checklist_pmo_maturity)
+- Case Studies (case_study_retail, case_study_banking, case_study_industry)
+- Webinars (webinar_quarterly_planning, webinar_ai_pmo)
+- Articles (article_10_authors_qp, article_excel_vs_tool)
+
+### Match Score Calculation
+Cada recurso recibe un match_score basado en 4 factores:
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| `keyword_overlap` | 0.35 | Keywords del hook vs tags del recurso |
+| `pain_point_alignment` | 0.30 | ¿El recurso resuelve el pain point? |
+| `role_fit` | 0.20 | ¿Job del contacto en ideal_for? |
+| `format_preference` | 0.15 | Preferencia inferida (video/doc/case study) |
+
+### Thresholds
+| match_score | Action |
+|-------------|--------|
+| >= 0.50 | Strong match → Include |
+| 0.35 - 0.49 | Medium match → Include if no better |
+| < 0.35 | Weak match → Do NOT include |
+
+### Output Structure (V11)
+```json
+"related_resources_to_offer": [{
+  "resource_id": "quarter_plan_video",
+  "match_score": 0.72,
+  "match_score_breakdown": {...},
+  "why_relevant": "...",
+  "hook_connection": {"connected_hook_id": "hook_001"},
+  "suggested_intro_phrase": "...",
+  "value_proposition": "..."
+}],
+"primary_resource_recommendation": {
+  "resource_id": "quarter_plan_video",
+  "selection_reason": "...",
+  "alternative_if_rejected": "ebook_why_quarter_plan",
+  "usage_instruction_for_content_generator": "..."
+},
+"resource_gap_detected": {
+  "gap_exists": false,
+  "content_generator_instruction": null
+}
+```
+
+### Evaluation Orchestrator Validation
+- Verify match_score >= 0.35 for all resources
+- Verify primary_resource is in related_resources_to_offer
+- Check resource_gap_detected has alternative approach if gap_exists
