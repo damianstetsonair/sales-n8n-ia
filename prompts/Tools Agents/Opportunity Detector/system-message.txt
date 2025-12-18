@@ -377,31 +377,84 @@ Classify each opportunity:
 
 ### STRENGTH SCORE CALCULATION:
 
-Base score on:
-1. Signal strength (0.0-0.4)
-2. Hook quality (0.0-0.3)
-3. Recency (0.0-0.3)
-signal_strength:
+Base score on 5 factors (UPDATED - MORE COMPREHENSIVE):
 
-Strong signal (INBOUND, meeting, call) = 0.3-0.4
-Medium signal (content view, LinkedIn engagement) = 0.15-0.25
-Weak signal (old activity, single touch) = 0.0-0.1
+1. **Signal strength** (0.0-0.4)
+2. **Hook quality** (0.0-0.3)
+3. **Recency** (0.0-0.3)
+4. **Deal context** (0.0-0.3) ← NEW
+5. **Relationship depth** (0.0-0.2) ← NEW
 
-hook_quality:
+#### 1. signal_strength (0.0-0.4):
 
-Strong hook with quote and context = 0.25-0.3
-Medium hook with topic but vague = 0.1-0.2
-No usable hook = 0.0
+| Signal Type | Score |
+|-------------|-------|
+| MEETING held (any duration) | 0.35-0.40 |
+| CALL completed | 0.30-0.35 |
+| INBOUND email/message | 0.25-0.35 |
+| Content view, LinkedIn engagement | 0.15-0.25 |
+| Old/weak activity only | 0.0-0.10 |
 
-recency:
+#### 2. hook_quality (0.0-0.3):
 
-Fresh (0-14 days) = 0.25-0.3
-Recent (15-60 days) = 0.15-0.2
-Old (61-120 days) = 0.05-0.1
-Stale (120+ days) = 0.0
+| Hook Type | Score |
+|-----------|-------|
+| Strong hook with quote + context | 0.25-0.30 |
+| Specific pain point mentioned | 0.20-0.25 |
+| Topic discussed but vague | 0.10-0.20 |
+| No usable hook | 0.0 |
 
+#### 3. recency (0.0-0.3):
 
-Final strength_score = signal + hook + recency (cap at 1.0)
+| Age | Score |
+|-----|-------|
+| Fresh (0-14 days) | 0.25-0.30 |
+| Recent (15-30 days) | 0.20-0.25 |
+| Moderate (31-60 days) | 0.15-0.20 |
+| Old (61-120 days) | 0.05-0.10 |
+| Stale (120+ days) | 0.0 |
+
+#### 4. deal_context (0.0-0.3) - NEW, CRITICAL:
+
+| Deal Situation | Score |
+|----------------|-------|
+| Active deal + pricing discussed | +0.25-0.30 |
+| Active deal + demo completed | +0.20-0.25 |
+| Active deal + next steps defined | +0.15-0.20 |
+| Deal open but early stage | +0.10-0.15 |
+| No deal / cold | 0.0 |
+
+⚠️ **CRITICAL**: If deal is active with recent meeting + pricing discussed, this factor alone should contribute 0.25-0.30!
+
+#### 5. relationship_depth (0.0-0.2) - NEW:
+
+| Relationship | Score |
+|--------------|-------|
+| Multiple meetings + ongoing dialogue | +0.15-0.20 |
+| Single substantial meeting | +0.10-0.15 |
+| Email exchanges only | +0.05-0.10 |
+| Cold/no history | 0.0 |
+
+### FINAL SCORE FORMULA:
+
+```
+strength_score = signal + hook + recency + deal_context + relationship_depth
+(cap at 1.0)
+```
+
+### MINIMUM SCORE RULES:
+
+⚠️ **FLOOR RULES** - These override the calculation:
+
+| Condition | Minimum Score |
+|-----------|---------------|
+| Meeting held in last 30 days | min 0.50 |
+| Active deal with pricing discussed | min 0.60 |
+| Demo completed + positive feedback | min 0.65 |
+| Meeting + pricing + next steps defined | min 0.75 |
+
+**EXAMPLE**: Contact had 33-min meeting, pricing discussed (~14,400€), next steps defined
+→ signal=0.40 + hook=0.25 + recency=0.25 + deal=0.30 + relationship=0.15 = **0.85** (not 0!)
 
 ### SCORE INTERPRETATION (UPDATED - LESS CONSERVATIVE):
 

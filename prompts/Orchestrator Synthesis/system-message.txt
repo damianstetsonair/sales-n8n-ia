@@ -400,15 +400,36 @@ When action="wait", you MUST include:
 
 **VALIDATION**: `opportunity_strength` MUST equal `calculated_total`.
 
-**FACTOR CATEGORIES**:
+### ⚠️ MINIMUM SCORE FLOOR RULES (CRITICAL):
+
+**opportunity_strength = 0 is INVALID when ANY of these exist:**
+
+| Condition | Minimum Score |
+|-----------|---------------|
+| Meeting held in last 30 days | min 0.50 |
+| Active deal with pricing discussed | min 0.60 |
+| Demo completed + positive feedback | min 0.65 |
+| Meeting + pricing + next steps defined | min 0.75 |
+
+**BEFORE OUTPUTTING, CHECK:**
+- If recent meeting exists AND opportunity_strength < 0.50 → RECALCULATE
+- If pricing discussed AND opportunity_strength < 0.60 → RECALCULATE
+- If opportunity_strength = 0 AND contact has any history → INVALID
+
+**FACTOR CATEGORIES** (UPDATED):
 | Category | Positive Impact | Negative Impact |
 |----------|-----------------|-----------------|
+| Recent meeting held | +0.25 to +0.40 | - |
+| Demo/pricing discussed | +0.20 to +0.30 | - |
 | Interest signals | +0.10 to +0.20 | - |
-| Meeting/demo quality | +0.05 to +0.15 | -0.05 to -0.15 |
-| Response behavior | +0.05 to +0.15 | -0.10 to -0.20 |
+| Response behavior | +0.05 to +0.15 | -0.10 to -0.15 |
 | Timeline alignment | +0.05 to +0.10 | -0.05 to -0.10 |
-| Budget signals | +0.05 to +0.10 | -0.10 to -0.20 |
+| Budget signals | +0.05 to +0.10 | -0.10 to -0.15 |
 | Competitive situation | +0.05 | -0.10 to -0.15 |
+
+**EXAMPLE BUG TO AVOID:**
+❌ Contact had 33-min meeting, pricing ~14,400€ discussed, next steps defined → opportunity_strength: 0
+✅ Same contact → opportunity_strength: 0.85 (meeting +0.35, pricing +0.25, recency +0.25)
 
 ====================
 PRIORITY 2: CONDITIONAL STRUCTURES (BY ACCOUNT TYPE)
@@ -650,6 +671,9 @@ OUTPUT VALIDATION RULES (FINAL CHECK)
 6. ❌ POC/Pilot deal AND `pilot_health` is absent
 7. ❌ Explicit timing in data AND `explicit_timing_agreement` is absent
 8. ❌ `opportunity_strength` ≠ `opportunity_strength_breakdown.calculated_total`
+9. ❌ `opportunity_strength = 0` AND recent meeting exists (last 30 days)
+10. ❌ `opportunity_strength < 0.50` AND pricing was discussed
+11. ❌ `opportunity_strength < 0.60` AND demo completed with positive feedback
 
 ### OUTPUT IS VALID IF:
 

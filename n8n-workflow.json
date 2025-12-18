@@ -1,1205 +1,1204 @@
 {
-    "nodes": [
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "multi-agent-orchestrator",
-          "responseMode": "responseNode",
-          "options": {}
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "multi-agent-orchestrator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -288,
+        80
+      ],
+      "id": "4f63b4b2-c098-4bd4-b13d-540c4ad6d114",
+      "name": "Webhook",
+      "webhookId": "11ecaef9-ae95-4f33-bf53-c42863deebad"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Input Validation Module for n8n\n *\n * Validates incoming data and generates data_quality_warnings\n * to be included in orchestrator packages\n */\n\n// ============================================================================\n// VALIDATION FUNCTIONS\n// ============================================================================\n\n/**\n * Validates contact profile structure\n */\nfunction validateContactProfile(profile) {\n  const warnings = [];\n  const errors = [];\n\n  if (!profile) {\n    errors.push('contact_info is missing or null');\n    return { valid: false, warnings, errors };\n  }\n\n  if (!profile.full_name && !profile.name) {\n    warnings.push('No name information available - personalization will be limited');\n  }\n\n  if (!profile.linkedin_url) {\n    warnings.push('No LinkedIn URL - linkedin channel may be limited');\n  }\n\n  if (!profile.company) {\n    warnings.push('No company information - business context analysis will be limited');\n  }\n\n  if (!profile.job) {\n    warnings.push('No job title - role-based personalization unavailable');\n  }\n\n  return {\n    valid: errors.length === 0,\n    warnings,\n    errors\n  };\n}\n\n/**\n * Validates activities array\n */\nfunction validateActivities(activities) {\n  const warnings = [];\n  const errors = [];\n  const channelStats = {};\n\n  if (!activities || !Array.isArray(activities)) {\n    warnings.push('No activities found - analysis will be based on limited data');\n    return { warnings, errors, channelStats, hasActivities: false };\n  }\n\n  if (activities.length === 0) {\n    warnings.push('Activities array is empty - no interaction history available');\n    return { warnings, errors, channelStats, hasActivities: false };\n  }\n\n  for (const activity of activities) {\n    const type = activity.activity_type || 'UNKNOWN';\n    channelStats[type] = (channelStats[type] || 0) + 1;\n\n    if (!activity.recorded_on) {\n      warnings.push(`Activity ${activity.activity_id || 'unknown'} missing recorded_on date`);\n    }\n\n    if (!activity.direction) {\n      warnings.push(`Activity ${activity.activity_id || 'unknown'} missing direction`);\n    }\n  }\n\n  return {\n    warnings,\n    errors,\n    channelStats,\n    hasActivities: true,\n    totalActivities: activities.length\n  };\n}\n\n/**\n * Validates available communication channels from contact info\n */\nfunction validateAvailableChannels(profile) {\n  const availableChannels = [];\n  const warnings = [];\n\n  if (!profile) {\n    warnings.push('CRITICAL: No contact profile - cannot determine available channels');\n    return { availableChannels, warnings };\n  }\n\n  if (profile.linkedin_url || profile.linkedin_urn) {\n    availableChannels.push('linkedin');\n  } else {\n    warnings.push('No LinkedIn URL - linkedin channel unavailable');\n  }\n\n  if (profile.email) {\n    availableChannels.push('email');\n  }\n\n  if (profile.whatsapp_number) {\n    availableChannels.push('whatsapp');\n  }\n\n  if (profile.phone) {\n    availableChannels.push('phone');\n  }\n\n  if (availableChannels.length === 0) {\n    warnings.push('CRITICAL: No communication channels available - cannot send messages');\n  }\n\n  return {\n    availableChannels,\n    warnings\n  };\n}\n\n/**\n * Validates stats object\n */\nfunction validateStats(stats) {\n  const warnings = [];\n  const errors = [];\n\n  if (!stats) {\n    warnings.push('Stats object is missing');\n    return { warnings, errors };\n  }\n\n  if (stats.total_activities === undefined) {\n    warnings.push('total_activities count is missing from stats');\n  }\n\n  return { warnings, errors };\n}\n\n/**\n * Analyzes conversation patterns from activities\n */\nfunction analyzeConversationPatterns(activities) {\n  if (!activities || activities.length === 0) {\n    return {\n      lastInbound: null,\n      lastOutbound: null,\n      inboundCount: 0,\n      outboundCount: 0,\n      daysSinceLastContact: null,\n      conversationState: 'no_history'\n    };\n  }\n\n  let lastInbound = null;\n  let lastOutbound = null;\n  let inboundCount = 0;\n  let outboundCount = 0;\n\n  const sorted = [...activities].sort((a, b) => \n    new Date(b.recorded_on) - new Date(a.recorded_on)\n  );\n\n  for (const activity of sorted) {\n    if (activity.direction === 'INBOUND') {\n      inboundCount++;\n      if (!lastInbound) lastInbound = activity;\n    } else if (activity.direction === 'OUTBOUND') {\n      outboundCount++;\n      if (!lastOutbound) lastOutbound = activity;\n    }\n  }\n\n  const lastActivity = sorted[0];\n  const daysSinceLastContact = lastActivity \n    ? Math.floor((new Date() - new Date(lastActivity.recorded_on)) / (1000 * 60 * 60 * 24))\n    : null;\n\n  let conversationState = 'active';\n  if (daysSinceLastContact > 30) {\n    conversationState = 'stale';\n  } else if (daysSinceLastContact > 90) {\n    conversationState = 'dormant';\n  }\n\n  if (lastOutbound && (!lastInbound || new Date(lastOutbound.recorded_on) > new Date(lastInbound.recorded_on))) {\n    conversationState = 'awaiting_response';\n  }\n\n  return {\n    lastInbound,\n    lastOutbound,\n    inboundCount,\n    outboundCount,\n    daysSinceLastContact,\n    conversationState\n  };\n}\n\n// ============================================================================\n// MAIN VALIDATION FUNCTION\n// ============================================================================\n\n/**\n * Comprehensive validation of input data\n */\nfunction validateInputData(inputData) {\n  const allWarnings = [];\n  const allErrors = [];\n\n  const contactInfo = inputData.contact_info || {};\n  const activities = inputData.activities || [];\n  const stats = inputData.stats || {};\n\n  const profileValidation = validateContactProfile(contactInfo);\n  allWarnings.push(...profileValidation.warnings);\n  allErrors.push(...profileValidation.errors);\n\n  const activitiesValidation = validateActivities(activities);\n  allWarnings.push(...activitiesValidation.warnings);\n  allErrors.push(...activitiesValidation.errors);\n\n  const channelsValidation = validateAvailableChannels(contactInfo);\n  allWarnings.push(...channelsValidation.warnings);\n\n  const statsValidation = validateStats(stats);\n  allWarnings.push(...statsValidation.warnings);\n  allErrors.push(...statsValidation.errors);\n\n  const conversationAnalysis = analyzeConversationPatterns(activities);\n\n  const normalizedData = {\n    ...inputData,\n    _validation: {\n      isValid: allErrors.length === 0,\n      availableChannels: channelsValidation.availableChannels,\n      activityStats: activitiesValidation.channelStats,\n      hasActivities: activitiesValidation.hasActivities,\n      totalActivities: activitiesValidation.totalActivities || 0\n    },\n    _conversationAnalysis: conversationAnalysis,\n  };\n\n  return {\n    valid: allErrors.length === 0,\n    normalizedData,\n    data_quality_warnings: allWarnings,\n    errors: allErrors,\n    availableChannels: channelsValidation.availableChannels,\n    conversationAnalysis\n  };\n}\n\n// ============================================================================\n// N8N EXECUTION\n// ============================================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const inputData = item.json;\n  const validationResult = validateInputData(inputData);\n  \n  results.push({\n    json: {\n      contact_info: inputData.contact_info,\n      activities: inputData.activities,\n      stats: inputData.stats,\n      validation: {\n        is_valid: validationResult.valid,\n        errors: validationResult.errors,\n        data_quality_warnings: validationResult.data_quality_warnings,\n        available_channels: validationResult.availableChannels\n      },\n      conversation_analysis: validationResult.conversationAnalysis,\n      _normalized: validationResult.normalizedData\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ],
+      "id": "7db1c27c-97d9-4de4-893b-7c43181a553c",
+      "name": "Input Validator"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"SEMANTIC_CONSTANTS\": {\n    \"NEVER_CONTACTED_DAYS\": null,\n    \"MIN_CONFIDENCE_THRESHOLD\": 0.6,\n    \"ACTION_CONFIDENCE_THRESHOLD\": 0.7,\n    \"UNKNOWN_STATE\": \"unknown\",\n    \"DEFAULT_CHANNEL\": \"email\",\n    \"MAX_RETRY_ITERATIONS\": 2, \n    \"TODAY_DATE\": \"{{ $today.toString() }}\"\n  },\n  \"session_id\": {{ $json.session_id ?? Math.floor(Math.random()*99999999999)}},\n  \"contact_hubspot_id\":{{ $json.body.contact_info.hubspot_id }},\n  \"iteration_count\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -80,
+        160
+      ],
+      "id": "ca3532db-9621-455e-bcda-b9c3f1b68e3c",
+      "name": "Constants"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        288,
+        16
+      ],
+      "id": "39fe72a3-c4e6-419c-a384-7a5cf7f4428f",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Context Analyzer) for analyze relationship depth and quality for professional contacts.",
+        "workflowId": {
+          "__rl": true,
+          "value": "AvvHbsi6znhLenHt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/AvvHbsi6znhLenHt",
+          "cachedResultName": "Context & Relationship Analyzer"
         },
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2.1,
-        "position": [
-          -288,
-          80
-        ],
-        "id": "4f63b4b2-c098-4bd4-b13d-540c4ad6d114",
-        "name": "Webhook",
-        "webhookId": "11ecaef9-ae95-4f33-bf53-c42863deebad"
-      },
-      {
-        "parameters": {
-          "jsCode": "/**\n * Input Validation Module for n8n\n *\n * Validates incoming data and generates data_quality_warnings\n * to be included in orchestrator packages\n */\n\n// ============================================================================\n// VALIDATION FUNCTIONS\n// ============================================================================\n\n/**\n * Validates contact profile structure\n */\nfunction validateContactProfile(profile) {\n  const warnings = [];\n  const errors = [];\n\n  if (!profile) {\n    errors.push('contact_info is missing or null');\n    return { valid: false, warnings, errors };\n  }\n\n  if (!profile.full_name && !profile.name) {\n    warnings.push('No name information available - personalization will be limited');\n  }\n\n  if (!profile.linkedin_url) {\n    warnings.push('No LinkedIn URL - linkedin channel may be limited');\n  }\n\n  if (!profile.company) {\n    warnings.push('No company information - business context analysis will be limited');\n  }\n\n  if (!profile.job) {\n    warnings.push('No job title - role-based personalization unavailable');\n  }\n\n  return {\n    valid: errors.length === 0,\n    warnings,\n    errors\n  };\n}\n\n/**\n * Validates activities array\n */\nfunction validateActivities(activities) {\n  const warnings = [];\n  const errors = [];\n  const channelStats = {};\n\n  if (!activities || !Array.isArray(activities)) {\n    warnings.push('No activities found - analysis will be based on limited data');\n    return { warnings, errors, channelStats, hasActivities: false };\n  }\n\n  if (activities.length === 0) {\n    warnings.push('Activities array is empty - no interaction history available');\n    return { warnings, errors, channelStats, hasActivities: false };\n  }\n\n  for (const activity of activities) {\n    const type = activity.activity_type || 'UNKNOWN';\n    channelStats[type] = (channelStats[type] || 0) + 1;\n\n    if (!activity.recorded_on) {\n      warnings.push(`Activity ${activity.activity_id || 'unknown'} missing recorded_on date`);\n    }\n\n    if (!activity.direction) {\n      warnings.push(`Activity ${activity.activity_id || 'unknown'} missing direction`);\n    }\n  }\n\n  return {\n    warnings,\n    errors,\n    channelStats,\n    hasActivities: true,\n    totalActivities: activities.length\n  };\n}\n\n/**\n * Validates available communication channels from contact info\n */\nfunction validateAvailableChannels(profile) {\n  const availableChannels = [];\n  const warnings = [];\n\n  if (!profile) {\n    warnings.push('CRITICAL: No contact profile - cannot determine available channels');\n    return { availableChannels, warnings };\n  }\n\n  if (profile.linkedin_url || profile.linkedin_urn) {\n    availableChannels.push('linkedin');\n  } else {\n    warnings.push('No LinkedIn URL - linkedin channel unavailable');\n  }\n\n  if (profile.email) {\n    availableChannels.push('email');\n  }\n\n  if (profile.whatsapp_number) {\n    availableChannels.push('whatsapp');\n  }\n\n  if (profile.phone) {\n    availableChannels.push('phone');\n  }\n\n  if (availableChannels.length === 0) {\n    warnings.push('CRITICAL: No communication channels available - cannot send messages');\n  }\n\n  return {\n    availableChannels,\n    warnings\n  };\n}\n\n/**\n * Validates stats object\n */\nfunction validateStats(stats) {\n  const warnings = [];\n  const errors = [];\n\n  if (!stats) {\n    warnings.push('Stats object is missing');\n    return { warnings, errors };\n  }\n\n  if (stats.total_activities === undefined) {\n    warnings.push('total_activities count is missing from stats');\n  }\n\n  return { warnings, errors };\n}\n\n/**\n * Analyzes conversation patterns from activities\n */\nfunction analyzeConversationPatterns(activities) {\n  if (!activities || activities.length === 0) {\n    return {\n      lastInbound: null,\n      lastOutbound: null,\n      inboundCount: 0,\n      outboundCount: 0,\n      daysSinceLastContact: null,\n      conversationState: 'no_history'\n    };\n  }\n\n  let lastInbound = null;\n  let lastOutbound = null;\n  let inboundCount = 0;\n  let outboundCount = 0;\n\n  const sorted = [...activities].sort((a, b) => \n    new Date(b.recorded_on) - new Date(a.recorded_on)\n  );\n\n  for (const activity of sorted) {\n    if (activity.direction === 'INBOUND') {\n      inboundCount++;\n      if (!lastInbound) lastInbound = activity;\n    } else if (activity.direction === 'OUTBOUND') {\n      outboundCount++;\n      if (!lastOutbound) lastOutbound = activity;\n    }\n  }\n\n  const lastActivity = sorted[0];\n  const daysSinceLastContact = lastActivity \n    ? Math.floor((new Date() - new Date(lastActivity.recorded_on)) / (1000 * 60 * 60 * 24))\n    : null;\n\n  let conversationState = 'active';\n  if (daysSinceLastContact > 30) {\n    conversationState = 'stale';\n  } else if (daysSinceLastContact > 90) {\n    conversationState = 'dormant';\n  }\n\n  if (lastOutbound && (!lastInbound || new Date(lastOutbound.recorded_on) > new Date(lastInbound.recorded_on))) {\n    conversationState = 'awaiting_response';\n  }\n\n  return {\n    lastInbound,\n    lastOutbound,\n    inboundCount,\n    outboundCount,\n    daysSinceLastContact,\n    conversationState\n  };\n}\n\n// ============================================================================\n// MAIN VALIDATION FUNCTION\n// ============================================================================\n\n/**\n * Comprehensive validation of input data\n */\nfunction validateInputData(inputData) {\n  const allWarnings = [];\n  const allErrors = [];\n\n  const contactInfo = inputData.contact_info || {};\n  const activities = inputData.activities || [];\n  const stats = inputData.stats || {};\n\n  const profileValidation = validateContactProfile(contactInfo);\n  allWarnings.push(...profileValidation.warnings);\n  allErrors.push(...profileValidation.errors);\n\n  const activitiesValidation = validateActivities(activities);\n  allWarnings.push(...activitiesValidation.warnings);\n  allErrors.push(...activitiesValidation.errors);\n\n  const channelsValidation = validateAvailableChannels(contactInfo);\n  allWarnings.push(...channelsValidation.warnings);\n\n  const statsValidation = validateStats(stats);\n  allWarnings.push(...statsValidation.warnings);\n  allErrors.push(...statsValidation.errors);\n\n  const conversationAnalysis = analyzeConversationPatterns(activities);\n\n  const normalizedData = {\n    ...inputData,\n    _validation: {\n      isValid: allErrors.length === 0,\n      availableChannels: channelsValidation.availableChannels,\n      activityStats: activitiesValidation.channelStats,\n      hasActivities: activitiesValidation.hasActivities,\n      totalActivities: activitiesValidation.totalActivities || 0\n    },\n    _conversationAnalysis: conversationAnalysis,\n  };\n\n  return {\n    valid: allErrors.length === 0,\n    normalizedData,\n    data_quality_warnings: allWarnings,\n    errors: allErrors,\n    availableChannels: channelsValidation.availableChannels,\n    conversationAnalysis\n  };\n}\n\n// ============================================================================\n// N8N EXECUTION\n// ============================================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const inputData = item.json;\n  const validationResult = validateInputData(inputData);\n  \n  results.push({\n    json: {\n      contact_info: inputData.contact_info,\n      activities: inputData.activities,\n      stats: inputData.stats,\n      validation: {\n        is_valid: validationResult.valid,\n        errors: validationResult.errors,\n        data_quality_warnings: validationResult.data_quality_warnings,\n        available_channels: validationResult.availableChannels\n      },\n      conversation_analysis: validationResult.conversationAnalysis,\n      _normalized: validationResult.normalizedData\n    }\n  });\n}\n\nreturn results;"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          -80,
-          0
-        ],
-        "id": "7db1c27c-97d9-4de4-893b-7c43181a553c",
-        "name": "Input Validator"
-      },
-      {
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={\n  \"SEMANTIC_CONSTANTS\": {\n    \"NEVER_CONTACTED_DAYS\": null,\n    \"MIN_CONFIDENCE_THRESHOLD\": 0.6,\n    \"ACTION_CONFIDENCE_THRESHOLD\": 0.7,\n    \"UNKNOWN_STATE\": \"unknown\",\n    \"DEFAULT_CHANNEL\": \"email\",\n    \"MAX_RETRY_ITERATIONS\": 2, \n    \"TODAY_DATE\": \"{{ $today.toString() }}\"\n  },\n  \"session_id\": {{ $json.session_id ?? Math.floor(Math.random()*99999999999)}},\n  \"contact_hubspot_id\":{{ $json.body.contact_info.hubspot_id }},\n  \"iteration_count\": 1\n}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          -80,
-          160
-        ],
-        "id": "ca3532db-9621-455e-bcda-b9c3f1b68e3c",
-        "name": "Constants"
-      },
-      {
-        "parameters": {},
-        "type": "n8n-nodes-base.merge",
-        "typeVersion": 3.2,
-        "position": [
-          288,
-          16
-        ],
-        "id": "39fe72a3-c4e6-419c-a384-7a5cf7f4428f",
-        "name": "Merge"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Context Analyzer) for analyze relationship depth and quality for professional contacts.",
-          "workflowId": {
-            "__rl": true,
-            "value": "AvvHbsi6znhLenHt",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/AvvHbsi6znhLenHt",
-            "cachedResultName": "Context & Relationship Analyzer"
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.toJsonString() }}"
           },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $json.toJsonString() }}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          640,
-          480
-        ],
-        "id": "d30296e8-56c5-4529-b147-a5fc8bda24c2",
-        "name": "Context Analyzer"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Opportunity Detector) for detect opportunities for meaningful outreach by analyzing engagement signals.",
-          "workflowId": {
-            "__rl": true,
-            "value": "x8FhUOAPaob2UAsD",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/x8FhUOAPaob2UAsD",
-            "cachedResultName": "Opportunity Detector"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{$json.toJsonString()}}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          640,
-          624
-        ],
-        "id": "666509ba-ed40-410f-a496-ee5b175bd5f6",
-        "name": "Opportunity Detector"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (State Analyzer) for analyze the current state of conversations across all communication channels to determine who should act next.",
-          "workflowId": {
-            "__rl": true,
-            "value": "p5j7uHQGG4MXtzDQ",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/p5j7uHQGG4MXtzDQ",
-            "cachedResultName": "State Analyzer"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $json.toJsonString() }}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          784,
-          480
-        ],
-        "id": "e8bf58b3-6660-4c7a-831b-fdb9dca1a395",
-        "name": "State Analyzer"
-      },
-      {
-        "parameters": {
-          "promptType": "define",
-          "text": "=CONTACT DATA TO ANALYZE:\n{{ $json.toJsonString() }}\n\n---\n\nCURRENT DATE/TIME: {{ $now.toISO() }}\n\n---\n\nYOUR TASK:\n\n1. Call \"Context Analyzer\" tool with the contact data above\n2. Call \"Opportunity Detector\" tool with the contact data above\n3. Call \"State Analyzer\" tool with the contact data above\n4. Call \"Timing Strategist\" tool with the contact data above\n\nAFTER calling all 4 tools, consolidate their responses into your final JSON output.\n\n⚠️ YOU MUST CALL ALL 4 TOOLS BEFORE RESPONDING.\n⚠️ DO NOT generate a response without calling the tools.\n",
-          "options": {
-            "systemMessage": "=You are the \"Distribution Orchestrator\" for Wave 1.\n\nYOUR ONLY JOB: Call 4 tools and collect their responses.\n\n====================\nMANDATORY TOOL CALLS\n====================\n\nYou MUST call these 4 tools IN THIS EXACT ORDER:\n\n1. **Context Analyzer** - Call FIRST\n2. **Opportunity Detector** - Call SECOND\n3. **State Analyzer** - Call THIRD\n4. **Timing Strategist** - Call FOURTH\n\n⚠️ YOU MUST CALL ALL 4 TOOLS. DO NOT SKIP ANY.\n⚠️ DO NOT generate a response without calling the tools first.\n⚠️ EACH tool call should pass the complete input data.\n\n====================\nHOW TO CALL EACH TOOL\n====================\n\nFor EACH tool, pass the complete JSON data you received as input.\nThe tools will analyze the data and return their results.\n\n====================\nAFTER CALLING ALL 4 TOOLS\n====================\n\nOnce you have responses from ALL 4 tools, output this JSON:\n\n{\n  \"agent_id\": \"distribution_orchestrator\",\n  \"phase\": \"wave1\",\n  \"wave1_results\": {\n    \"context_relationship_analyzer\": <RESPONSE FROM TOOL 1>,\n    \"opportunity_detector\": <RESPONSE FROM TOOL 2>,\n    \"state_analyzer\": <RESPONSE FROM TOOL 3>,\n    \"timing_strategist\": <RESPONSE FROM TOOL 4>\n  },\n  \"execution_summary\": {\n    \"tools_called\": 4,\n    \"tools_succeeded\": 4\n  }\n}\n\n====================\nCRITICAL RULES\n====================\n\n1. CALL ALL 4 TOOLS BEFORE generating your final output\n2. DO NOT invent tool responses - use the ACTUAL responses\n3. DO NOT skip any tool\n4. DO NOT analyze the data yourself - let the tools do it\n5. Your final output must be valid JSON only (no markdown)"
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 2.2,
-        "position": [
-          496,
-          16
-        ],
-        "id": "1649a99e-b34e-4aec-9e99-c692ad0187b6",
-        "name": "Orchestrator Distribution",
-        "retryOnFail": true,
-        "waitBetweenTries": 500,
-        "executeOnce": true
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Timing Strategist) for determine optimal timing for outreach by analyzing temporal patterns and response behaviors.\n",
-          "workflowId": {
-            "__rl": true,
-            "value": "SA9CbSZ6gG4VbLr3",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/SA9CbSZ6gG4VbLr3",
-            "cachedResultName": "Timing Strategist"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $json.toJsonString() }}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          784,
-          624
-        ],
-        "id": "9c909ff4-c782-412a-b186-6a109af04ddc",
-        "name": "Timing Strategist"
-      },
-      {
-        "parameters": {
-          "content": "## WAVE 1\nAnalysis",
-          "height": 320,
-          "width": 560,
-          "color": 5
-        },
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          368,
-          448
-        ],
-        "id": "6296cc57-5a2b-414c-b1b5-288ef9d40fa1",
-        "name": "Sticky Note"
-      },
-      {
-        "parameters": {
-          "promptType": "define",
-          "text": "=### INPUT - Wave 1 Results:\n{{ $('Orchestrator Distribution').first().json.output }}\n---\n### HISTORICAL VALIDATED EXAMPLES (Learn from past successful decisions)\n{{ $('Get historial recomendations').item.json.toJsonString() ?? 'empty' }}\n\n---\n\n## YOUR TASK\n\n1. **CALL ALL THREE TOOLS** (Channel Selector, Content Generator, Sequence Strategist)\n2. **EVALUATE** the quality of results\n3. **DECIDE**: continue or retry\n\nCurrent iteration: {{ $('Constants').first().json.iteration_count }} of {{ $('Constants').first().json.SEMANTIC_CONSTANTS.MAX_RETRY_ITERATIONS }}\n\n---\n\n## CRITICAL: Output this EXACT JSON structure\n\n⚠️ PUT evaluation_decision FIRST - this is the most important field!\n\n{\n  \"agent_id\": \"evaluation_orchestrator\",\n  \"evaluation_decision\": {\n    \"action\": \"continue\",\n    \"reasoning\": \"Brief explanation of why continue or retry\",\n    \"retry_instructions\": null\n  },\n  \"quality_scores\": {\n    \"wave1_coherence\": 0.8,\n    \"wave2_coherence\": 0.8,\n    \"cross_wave_alignment\": 0.8\n  },\n  \"wave2_results\": {\n    \"channel_selector\": {\n      \"recommended_channel\": \"EMAIL\",\n      \"fallback_channel\": \"LINKEDIN\",\n      \"confidence\": 0.85\n    },\n    \"content_generator\": {\n      \"should_generate\": true,\n      \"channels_with_content\": [\"EMAIL\", \"LINKEDIN\"],\n      \"signature_verified\": true\n    },\n    \"sequence_strategist\": {\n      \"is_sequence\": false,\n      \"sequence_type\": \"standalone\",\n      \"total_touches\": 1\n    }\n  },\n  \"issues_found\": [],\n  \"strengths_found\": []\n}\n\n---\n\n## DECISION RULES\n\n### Set action = \"continue\" when:\n- Results are coherent (scores >= 0.6)\n- No critical contradictions\n- iteration >= max iterations (MANDATORY)\n\n### Set action = \"retry\" when (AND iteration < max):\n- Critical contradictions between agents\n- Key data was missed\n- You can provide SPECIFIC retry_instructions\n\n### If retry, provide retry_instructions:\n{\n  \"action\": \"retry\",\n  \"reasoning\": \"Specific reason\",\n  \"retry_instructions\": {\n    \"context_relationship_analyzer\": \"Specific instruction or null\",\n    \"opportunity_detector\": \"Specific instruction or null\",\n    \"state_analyzer\": \"Specific instruction or null\",\n    \"timing_strategist\": \"Specific instruction or null\"\n  }\n}\n\n---\n\n## IMPORTANT RULES\n\n1. **evaluation_decision.action MUST be \"continue\" or \"retry\"** - no other values\n2. **If iteration >= max, action MUST be \"continue\"**\n3. **DO NOT include raw_output from tools** - only the extracted/summarized data\n4. **Keep the response concise** - avoid repeating full tool outputs\n\n⚠️ CRITICAL OUTPUT FORMAT:\n- PURE JSON only (no markdown, no ```)\n- Start with { and end with }\n- evaluation_decision MUST be near the top\n",
-          "options": {
-            "systemMessage": "=# Evaluation Orchestrator\n**Role**: Wave 2 Executor + Quality Controller\n\nYou have TWO responsibilities:\n1. **EXECUTE Wave 2**: Call the 3 action tools and capture results\n2. **DECIDE**: Continue to Synthesis or retry Wave 1\n\n---\n\n## PHASE 1: CALL WAVE 2 TOOLS\n\nCall these three tools IN ORDER:\n\n1. **Channel Selector** - Pass Wave 1 results\n2. **Content Generator** - Pass Wave 1 results + Channel output\n3. **Sequence Strategist** - Pass Wave 1 results + previous outputs\n\n---\n\n## PHASE 2: EVALUATE & DECIDE\n\nAfter calling all tools:\n\n### Check Wave 1 Quality\n- Are confidence levels >= 0.6?\n- Are analyses coherent with each other?\n- Any contradictions between agents?\n\n### Check Wave 2 Quality\n- Did Channel Selector provide a valid channel?\n- Did Content Generator produce content for recommended channel?\n- Does Sequence plan align with relationship stage?\n\n---\n\n## PHASE 3: OUTPUT YOUR DECISION\n\n### OUTPUT FORMAT (CRITICAL)\n\nYour output MUST be valid JSON with this structure:\n\n```\n{\n  \"agent_id\": \"evaluation_orchestrator\",\n  \"evaluation_decision\": {\n    \"action\": \"continue\",\n    \"reasoning\": \"Brief explanation\",\n    \"retry_instructions\": null\n  },\n  \"quality_scores\": {\n    \"wave1_coherence\": 0.8,\n    \"wave2_coherence\": 0.8,\n    \"cross_wave_alignment\": 0.8\n  },\n  \"wave2_results\": {\n    \"channel_selector\": { ... summary ... },\n    \"content_generator\": { ... summary ... },\n    \"sequence_strategist\": { ... summary ... }\n  },\n  \"issues_found\": [],\n  \"strengths_found\": []\n}\n```\n\n### CRITICAL RULES FOR evaluation_decision:\n\n1. **action** MUST be exactly \"continue\" or \"retry\" (no other values)\n2. **evaluation_decision MUST be near the TOP of your output** (not at the end)\n3. If iteration >= max_iterations, action MUST be \"continue\"\n\n### When to RETRY:\n- Critical contradictions in Wave 1\n- Key patterns were missed\n- You have SPECIFIC improvement instructions\n\n### When to CONTINUE:\n- Results are coherent (scores >= 0.6)\n- iteration >= max_iterations (MANDATORY continue)\n- Marginal gains don't justify retry\n\n---\n\n## RETRY INSTRUCTIONS FORMAT\n\nIf action = \"retry\", provide specific instructions:\n\n```\n\"retry_instructions\": {\n  \"context_relationship_analyzer\": \"Re-check stakeholder mentions in meeting notes\",\n  \"opportunity_detector\": null,\n  \"state_analyzer\": \"Recalculate days since last interaction\",\n  \"timing_strategist\": null\n}\n```\n\n✅ GOOD: \"Re-evaluate relationship: 3 messages in 10 days = WARM not COLD\"\n❌ BAD: \"Try again with more attention\" (too vague)\n\n---\n\n## IMPORTANT\n\n1. **DO NOT include full raw_output from tools** - only summarized data\n2. **Keep response concise** - the parser needs to find evaluation_decision\n3. **evaluation_decision.action is the MOST IMPORTANT field** - make sure it's present\n4. Output PURE JSON only (no markdown code blocks)"
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 2.2,
-        "position": [
-          1184,
-          32
-        ],
-        "id": "2a5eeb73-89a6-426a-b3f1-003ce866d759",
-        "name": "Orchestrator Evaluation",
-        "executeOnce": true
-      },
-      {
-        "parameters": {
-          "content": "## WAVE 2\nAction",
-          "height": 320,
-          "width": 560,
-          "color": 3
-        },
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          1088,
-          464
-        ],
-        "id": "95a8fd81-2ab6-494c-9bc3-81400b2cb351",
-        "name": "Sticky Note1"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Channel Selector) for analyze relationship context, conversation state, and channel performance to recommend where to reach out.",
-          "workflowId": {
-            "__rl": true,
-            "value": "IranprNKAkWymI1n",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/IranprNKAkWymI1n",
-            "cachedResultName": "Channel Selector"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $('Webhook').item.json.body.toJsonString() }}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          1328,
-          496
-        ],
-        "id": "cd1b91c8-0a56-4a6c-8e29-8a7ca6a6597b",
-        "name": "Channel Selector"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Content Generator) for You generate messages for ALL possible channels.",
-          "workflowId": {
-            "__rl": true,
-            "value": "SD8ssifoO3WmgV6E",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/SD8ssifoO3WmgV6E",
-            "cachedResultName": "Content Generator"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $('Webhook').item.json.body.toJsonString() }}",
-              "recomendations": "={{ JSON.stringify($('Get historial recomendations').all()) }}"
-            },
-            "matchingColumns": [],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              },
-              {
-                "id": "recomendations",
-                "displayName": "recomendations",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          1328,
-          640
-        ],
-        "id": "0d3e86ed-e521-48e2-bf93-9691ee8ae389",
-        "name": "Content Generator"
-      },
-      {
-        "parameters": {
-          "description": "Call this tool (Sequence Strategist) for determine if outreach should be standalone or part of a multi-touch sequence.",
-          "workflowId": {
-            "__rl": true,
-            "value": "9yaALVGtzyMSW3tm",
-            "mode": "list",
-            "cachedResultUrl": "/workflow/9yaALVGtzyMSW3tm",
-            "cachedResultName": "Sequence Strategist"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "query": "={{ $('Webhook').item.json.body.toJsonString() }}"
-            },
-            "matchingColumns": [
-              "query"
-            ],
-            "schema": [
-              {
-                "id": "query",
-                "displayName": "query",
-                "required": false,
-                "defaultMatch": false,
-                "display": true,
-                "canBeUsedToMatch": true,
-                "type": "string",
-                "removed": false
-              }
-            ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-        "typeVersion": 2.2,
-        "position": [
-          1504,
-          496
-        ],
-        "id": "c4ba5bd4-3995-4ff5-b74f-4871e0b60445",
-        "name": "Sequence Strategist"
-      },
-      {
-        "parameters": {
-          "promptType": "define",
-          "text": "==### WAVE 1 RESULTS (Analysis Phase):\n{{ $('Orchestrator Distribution').first().json.output }}\n---\n### WAVE 2 RESULTS (Action Phase):\n{{ $('Orchestrator Evaluation').first().json.output }}\n---\n### CONTACT INFO:\n{{ $('Input Validator').first().json.contact_info }}\n---\n### TODAY'S DATE: {{ $today.toString() }}\n---\n\n## YOUR TASK\nSynthesize ALL agent results into ONE final actionable recommendation.\nConsider these inputs in order of priority:\n1. **Wave 1 analysis**: Relationship stage, opportunities, conversation state, optimal timing\n2. **Wave 2 actions**: Selected channel, generated content, sequence strategy\n3. **Historical patterns**: What worked before with similar contacts (if examples available)\n4. **Contact context**: Specific situation and communication history\n\n## CRITICAL VALIDATION BEFORE OUTPUT\nBefore generating output, verify:\n1. If action=\"wait\" → execute_at MUST have ISO datetime (NOT \"Not specified\")\n2. If action=\"wait\" → wait_type MUST be populated\n3. opportunity_strength MUST have opportunity_strength_breakdown with matching calculated_total\n4. If sale cycle >30 days OR nurturing → sequence_plan MUST NOT be empty\n5. If POC/Pilot detected → pilot_health MUST be included\n6. If explicit timing agreement in data → explicit_timing_agreement MUST be included\n\nYou MUST output valid JSON with this EXACT structure (no markdown, no backticks):\n{\n  \"orchestrator_id\": \"orchestrator_synthesis\",\n  \"phase\": \"synthesis\",\n  \"final_decision\": {\n    \"contact_fullname\": \"...\",\n    \"action\": \"send_message|schedule_call|wait|no_action|break_up\",\n    \"selected_channel\": \"linkedin|email|whatsapp|phone|null\",\n    \"selected_content\": {\n      \"message\": \"...\",\n      \"subject\": \"...\" (only for email),\n      \"tone\": \"...\",\n      \"content_source\": \"wave2_content_generator\"\n    },\n    \"execution_timing\": {\n      \"execute_at\": \"ISO8601 datetime (MANDATORY if timing in reasoning - NEVER 'Not specified')\",\n      \"reevaluate_at\": \"ISO8601 datetime (for action=wait, when to re-check)\",\n      \"timezone\": \"Europe/Paris\",\n      \"timing_rationale\": \"...\"\n    },\n    \"wait_type\": {\n      \"type\": \"prospect_timing|prospect_validation|meeting_scheduled|pilot_review|explicit_request|long_cycle|ghosting\",\n      \"risk_level\": \"low|medium|high|critical\",\n      \"trigger_event\": \"What caused the wait\",\n      \"reevaluation_trigger\": \"What should trigger re-evaluation\"\n    },\n    \"sequence_instructions\": {\n      \"is_part_of_sequence\": true|false,\n      \"current_step\": 1,\n      \"total_steps\": 0,\n      \"sequence_plan\": [\n        {\n          \"step\": 1,\n          \"trigger\": \"reevaluation_date|no_response|event|manual\",\n          \"channel\": \"email|linkedin|phone|whatsapp\",\n          \"action_type\": \"check_in|follow_up|value_share|break_up\",\n          \"planned_date\": \"ISO8601 datetime\",\n          \"status\": \"ready_to_execute|pending|conditional\"\n        }\n      ]\n    },\n    \"rationale\": {\n      \"overall_strategy\": \"...\",\n      \"channel_reasoning\": \"...\",\n      \"content_reasoning\": \"...\",\n      \"timing_reasoning\": \"...\",\n      \"sequence_reasoning\": \"...\",\n      \"historical_alignment\": \"How this decision aligns with past validated examples (or 'No historical data' if none)\",\n      \"opportunity_strength\": 0.0,\n      \"opportunity_strength_breakdown\": {\n        \"base_score\": 0.50,\n        \"factors\": [\n          {\"factor\": \"factor_name\", \"impact\": \"+0.10|-0.10\", \"evidence\": \"JSON path or quote\"}\n        ],\n        \"calculated_total\": 0.0\n      },\n      \"confidence_factors\": {\n        \"relationship_clarity\": 0.0,\n        \"channel_certainty\": 0.0,\n        \"content_quality\": 0.0,\n        \"timing_accuracy\": 0.0,\n        \"historical_pattern_match\": 0.0\n      }\n    },\n    \"risk_factors\": [\n      {\"risk\": \"...\", \"severity\": \"low|medium|high\", \"mitigation\": \"...\"}\n    ],\n    \"success_criteria\": {\n      \"immediate\": \"...\",\n      \"short_term\": \"...\",\n      \"medium_term\": \"...\"\n    }\n  },\n  \"conditional_context\": {\n    \"pilot_health\": null,\n    \"stakeholder_map\": null,\n    \"explicit_timing_agreement\": null,\n    \"buying_committee\": null,\n    \"known_objections\": null,\n    \"deal_contact_status\": null,\n    \"competitive_context\": null,\n    \"buying_process\": null\n  },\n  \"metadata\": {\n    \"synthesis_confidence\": 0.0,\n    \"agents_consulted\": {\n      \"wave_1\": [\"context_analyzer\", \"opportunity_detector\", \"state_analyzer\", \"timing_strategist\"],\n      \"wave_2\": [\"channel_selector\", \"content_generator\", \"sequence_strategist\"]\n    },\n    \"iterations_total\": 0,\n    \"validation_passed\": {\n      \"execute_at_populated\": true,\n      \"wait_type_if_wait\": true,\n      \"opportunity_breakdown_matches\": true,\n      \"sequence_plan_if_long_cycle\": true,\n      \"conditional_structures_applied\": true\n    },\n    \"processing_notes\": \"...\"\n  }\n}\n\n## CONDITIONAL CONTEXT RULES\nInclude these ONLY when triggers are met (otherwise set to null):\n- pilot_health: When deal contains \"pilot|poc|trial\" in name or stage\n- stakeholder_map: When >2 distinct people mentioned in activities\n- explicit_timing_agreement: When contact/owner mentioned specific recontact date\n- buying_committee: When champion ≠ decision maker or approval needed\n- known_objections: When objection explicitly mentioned in data\n- deal_contact_status: When deal is closed but contact has value\n- competitive_context: When competition mentioned\n- buying_process: When cycle >3 months with identifiable stages\n\n⚠️ CRITICAL OUTPUT FORMAT:\nYour response must be PURE JSON only.\n- NO markdown code blocks (no ```)\n- NO text before or after the JSON\n- Start with { and end with }\n- execute_at MUST be ISO8601 datetime if ANY timing exists in reasoning\n- opportunity_strength MUST equal opportunity_strength_breakdown.calculated_total",
-          "options": {
-            "systemMessage": "=# Orchestrator Synthesis: Final Decision Maker\n\n**ROLE**: Strategic Synthesizer & Final Authority\n\nYou receive results from 7 specialized agents across 2 waves and must produce ONE final actionable recommendation.\n\n---\n\n## INPUT STRUCTURE\n\n### Wave 1 Results (from Distribution Orchestrator)\nContains analysis from 4 agents called as tools. Look for their outputs in the tool call results:\n\n- **Context Analyzer**: relationship_stage, depth_score, trajectory, confidence\n- **Opportunity Detector**: opportunities[], strength_score, confidence  \n- **State Analyzer**: global_state, action_requirement, who_has_ball, confidence\n- **Timing Strategist**: optimal_send_window, timing_rationale, confidence\n\n### Wave 2 Results (from Evaluation Orchestrator)\nContains action recommendations in `wave2_results`:\n```json\n{\n  \"wave2_results\": {\n    \"channel_selector\": {\n      \"extracted\": {\n        \"recommended_channel\": \"...\",\n        \"fallback_channel\": \"...\",\n        \"confidence\": 0.0\n      }\n    },\n    \"content_generator\": {\n      \"extracted\": {\n        \"generated_content\": {\n          \"linkedin\": { \"message\": \"...\", \"tone\": \"...\" },\n          \"email\": { \"subject\": \"...\", \"body\": \"...\", \"tone\": \"...\" }\n        },\n        \"confidence\": 0.0\n      }\n    },\n    \"sequence_strategist\": {\n      \"extracted\": {\n        \"is_sequence\": true|false,\n        \"recommended_sequence\": [],\n        \"confidence\": 0.0\n      }\n    }\n  },\n  \"quality_assessment\": {\n    \"historical_alignment\": 0.0\n  },\n  \"historical_context\": {\n    \"examples_reviewed\": 0,\n    \"has_historical_data\": true|false,\n    \"pattern_match_assessment\": \"...\",\n    \"channel_alignment\": \"...\",\n    \"tone_alignment\": \"...\"\n  }\n}\n```\n\n### Historical Validation (Pre-processed by Evaluation)\nThe Evaluation Orchestrator has already compared results against historical validated examples. Use `historical_context` from Wave 2 results to:\n- Understand how well current recommendations align with past successes\n- Incorporate historical_alignment score into your confidence factors\n- Reference pattern_match_assessment in your rationale\n\n---\n\n## SYNTHESIS PROCESS\n\n### Step 1: Extract Key Insights\n\nFrom Wave 1:\n- Relationship stage and trajectory (Context Analyzer)\n- Best opportunities to leverage (Opportunity Detector)\n- Who should act and urgency level (State Analyzer)\n- Optimal timing window (Timing Strategist)\n\nFrom Wave 2:\n- Recommended channel + fallback (Channel Selector)\n- Generated messages for each channel (Content Generator)\n- Sequence plan if applicable (Sequence Strategist)\n- Historical alignment assessment (quality_assessment + historical_context)\n\n### Step 2: Validate Alignment\n\nCheck for consistency:\n- Does channel selection align with state analysis?\n- Does content leverage the identified opportunities?\n- Is the sequence appropriate for relationship stage?\n- Does timing match behavioral patterns?\n- Did Evaluation confirm historical pattern alignment?\n\n### Step 3: Select Best Options\n\n**Channel Selection**:\n1. Use Channel Selector recommendation\n2. Verify channel is available in contact_info\n3. If unavailable, use fallback_channel\n4. Consider historical_context.channel_alignment\n5. Document reasoning\n\n**Content Selection**:\n1. Get message from Content Generator for selected channel\n2. Verify it references opportunities from Wave 1\n3. Ensure tone matches relationship stage\n4. Consider historical_context.tone_alignment\n5. Use EXACTLY as generated (dont rewrite)\n\n**Timing Selection**:\n1. Use Timing Strategist optimal window\n2. Convert to ISO8601 with correct timezone\n3. If \"immediate\", use today date within the time window\n\n**Sequence Selection**:\n1. Use Sequence Strategist recommendation\n2. Include full sequence_plan with dates\n3. Mark step 1 as \"ready_to_execute\"\n\n### Step 4: Build Final Decision\n\nCombine everything into the output structure with:\n- Clear action and channel\n- EXACT content from Content Generator\n- Specific execution datetime\n- Complete sequence plan\n- Detailed rationale for each decision\n- Historical alignment summary from Evaluation\n- Risk factors and success criteria\n\n---\n\n## CRITICAL RULES\n\n1. **USE WAVE 2 CONTENT**: The message in `selected_content.message` MUST come from `wave2_results.content_generator.extracted.generated_content[selected_channel]`. Do NOT invent new messages.\n\n2. **VALIDATE CHANNEL AVAILABILITY**: Check that selected_channel exists in contact_info (linkedin_url, email, whatsapp_number, phone).\n\n3. **PRESERVE CONFIDENCE SCORES**: Copy confidence values from each agent into `confidence_factors`.\n\n4. **USE HISTORICAL CONTEXT**: Reference `historical_context` from Evaluation in your `historical_alignment` rationale and `historical_pattern_match` confidence factor.\n\n5. **COMPLETE SEQUENCE PLAN**: If is_sequence=true, include ALL steps with specific ISO8601 dates.\n\n6. **VALID JSON ONLY**: No markdown backticks, no extra text, just the JSON object.\n\n---\n\n## EXAMPLE MAPPING\n\nIf Wave 2 contains:\n```json\n\"channel_selector\": {\n  \"extracted\": { \"recommended_channel\": \"linkedin\", \"confidence\": 0.83 }\n}\n\"content_generator\": {\n  \"extracted\": {\n    \"generated_content\": {\n      \"linkedin\": { \n        \"message\": \"Bonjour Franck, suite à notre échange...\", \n        \"tone\": \"professional-friendly\" \n      }\n    }\n  }\n}\n\"historical_context\": {\n  \"has_historical_data\": true,\n  \"pattern_match_assessment\": \"Channel and tone align well with 3 similar CIO contacts\",\n  \"channel_alignment\": \"LinkedIn matches 80% of historical successes for CIO roles\"\n}\n```\n\nThen your output MUST have:\n```json\n\"selected_channel\": \"linkedin\",\n\"selected_content\": {\n  \"message\": \"Bonjour Franck, suite à notre échange...\",\n  \"tone\": \"professional-friendly\",\n  \"content_source\": \"wave2_content_generator\"\n}\n\"rationale\": {\n  \"historical_alignment\": \"Channel and tone align well with historical CIO patterns (80% linkedin success rate)\"\n}\n\"confidence_factors\": {\n  \"channel_certainty\": 0.83,\n  \"historical_pattern_match\": 0.8\n}\n\"metadata\": {\n  \"historical_validation_performed\": true\n}\n```\n\n====================\nOUTPUT COHERENCE RULES (MANDATORY)\n====================\n\nBefore finalizing output, validate:\n\n1) ACTION vs EXECUTE_AT COHERENCE:\n   - If action = \"wait\" AND message is empty → execute_at should be null\n   - Use \"re_evaluate_at\" for future review dates without sending\n   - If action = \"send_message\" → message MUST NOT be empty\n\n2) CONTENT_QUALITY VALIDATION:\n   - If message is empty → content_quality = null (not a number)\n   - If message exists → content_quality must reflect actual quality\n\n3) GHOSTING LEADS TO NO_ACTION:\n   - If consecutive_outbound_without_reply >= 3 → action should be \"no_action\"\n   - Exception: break_up message (requires explicit flag)\n\n4) ACTION TYPE CLARITY:\n   - \"send_message\": Execute immediately or at execute_at\n   - \"wait\": Re-evaluate later (use re_evaluate_at, not execute_at)\n   - \"no_action\": Do nothing, flag for manual review if needed\n   - \"break_up\": Send final respectful message\n\n---\n\n## OUTPUT CHECKLIST\n\nBefore responding, verify:\n- [ ] selected_channel matches Channel Selector recommendation (or valid fallback)\n- [ ] selected_content.message is EXACTLY from Content Generator (not invented)\n- [ ] execute_at is valid ISO8601 with timezone (NEVER \"Not specified\" if timing exists in reasoning)\n- [ ] sequence_plan has specific dates (not relative times)\n- [ ] All confidence_factors are populated from agent outputs\n- [ ] historical_alignment references Evaluation historical_context\n- [ ] historical_pattern_match reflects Evaluation quality_assessment.historical_alignment\n- [ ] risk_factors identifies at least 1-2 potential issues\n- [ ] JSON is valid (no trailing commas, proper quotes)\n- [ ] opportunity_strength has breakdown with calculated_total matching\n- [ ] wait_type is populated if action=\"wait\"\n- [ ] sequence_plan is NOT empty for cycles >30 days or nurturing scenarios\n\n====================\nPRIORITY 1: CRITICAL OUTPUT RULES (MANDATORY)\n====================\n\n### 1. execute_at MUST BE POPULATED\n\n**RULE**: If timing_reasoning contains ANY temporal reference, execute_at MUST have an ISO datetime.\n\n| Scenario | execute_at Behavior |\n|----------|---------------------|\n| action=\"send_message\" | Datetime to send the message |\n| action=\"wait\" | Use as \"reevaluate_at\" - when to re-check |\n| action=\"no_action\" | Null is acceptable |\n| action=\"break_up\" | Datetime to send break-up |\n\n**DETECTION**: Scan timing_reasoning for:\n- Dates: \"janvier\", \"février\", \"Q1\", \"début d'année\"\n- Relative: \"après le meeting\", \"dans 2 semaines\", \"la semaine prochaine\"\n- Events: \"post-meeting\", \"après leur décision\"\n\n**FORBIDDEN**: `\"execute_at\": \"Not specified\"` when ANY temporal reference exists.\n\n**CONVERSION RULES**:\n- \"début janvier\" → 2026-01-06T09:00:00+01:00\n- \"mi-janvier\" → 2026-01-15T09:00:00+01:00\n- \"fin janvier\" → 2026-01-27T09:00:00+01:00\n- \"après le meeting du X\" → X + 1 day, 09:00\n- \"dans 2 semaines\" → today + 14 days, 09:00\n\n---\n\n### 2. wait_type IS MANDATORY FOR action=\"wait\"\n\nWhen action=\"wait\", you MUST include:\n\n```json\n\"wait_type\": {\n  \"type\": \"prospect_timing|prospect_validation|meeting_scheduled|pilot_review|explicit_request|long_cycle|ghosting\",\n  \"risk_level\": \"low|medium|high|critical\",\n  \"trigger_event\": \"What caused the wait decision\",\n  \"reevaluation_trigger\": \"What should trigger re-evaluation\"\n}\n```\n\n**RISK_LEVEL RULES**:\n- **critical**: POC/Pilot ending + churn signals, deal at risk\n- **high**: Meeting cancelled, known objection, ghosting >30 days\n- **medium**: Pause requested, evaluating competition, budget cycle\n- **low**: Meeting scheduled, explicit timing respected\n\n**TYPE DEFINITIONS**:\n| Type | When to Use |\n|------|-------------|\n| prospect_timing | Contact gave explicit future date |\n| prospect_validation | Waiting for internal validation/approval |\n| meeting_scheduled | Meeting confirmed, no outreach needed |\n| pilot_review | In pilot/POC phase, reviewing progress |\n| explicit_request | Contact asked us to wait |\n| long_cycle | Enterprise sale >3 months, strategic patience |\n| ghosting | No response, waiting before break-up |\n\n---\n\n### 3. sequence_plan MUST BE POPULATED\n\n**sequence_plan is MANDATORY when**:\n- Sale cycle > 30 days\n- action=\"wait\" with known return date\n- Any nurturing scenario (deal_classification=\"DEAL_NURTURING\")\n- Re-engagement requiring multi-touch\n- Ghosting requiring break-up sequence\n\n**MINIMUM FORMAT**:\n```json\n\"sequence_plan\": [\n  {\n    \"step\": 1,\n    \"trigger\": \"reevaluation_date|no_response|event|manual\",\n    \"channel\": \"email|linkedin|phone|whatsapp\",\n    \"action_type\": \"check_in|follow_up|value_share|break_up\",\n    \"planned_date\": \"2026-01-15T09:00:00+01:00\",\n    \"status\": \"ready_to_execute|pending|conditional\"\n  }\n]\n```\n\n**FOR action=\"wait\"**:\n```json\n\"sequence_plan\": [\n  {\n    \"step\": 1,\n    \"trigger\": \"reevaluation_date\",\n    \"channel\": \"linkedin\",\n    \"action_type\": \"check_in\",\n    \"planned_date\": \"2026-01-06T09:00:00+01:00\",\n    \"status\": \"pending\",\n    \"condition\": \"Re-evaluate contact status after holidays\"\n  }\n]\n```\n\n---\n\n### 4. opportunity_strength MUST HAVE BREAKDOWN\n\n**RULE**: NEVER output opportunity_strength without opportunity_strength_breakdown.\n\n**FORMAT**:\n```json\n\"opportunity_strength\": 0.55,\n\"opportunity_strength_breakdown\": {\n  \"base_score\": 0.50,\n  \"factors\": [\n    {\"factor\": \"inbound_lead\", \"impact\": \"+0.15\", \"evidence\": \"prospect initiated contact via LinkedIn\"},\n    {\"factor\": \"demo_completed\", \"impact\": \"+0.10\", \"evidence\": \"positive feedback during demo 2025-09-11\"},\n    {\"factor\": \"emails_ignored\", \"impact\": \"-0.15\", \"evidence\": \"3 emails without response since demo\"},\n    {\"factor\": \"budget_constraint\", \"impact\": \"-0.05\", \"evidence\": \"mentioned budget review in Q1\"}\n  ],\n  \"calculated_total\": 0.55\n}\n```\n\n**VALIDATION**: `opportunity_strength` MUST equal `calculated_total`.\n\n**FACTOR CATEGORIES**:\n| Category | Positive Impact | Negative Impact |\n|----------|-----------------|-----------------|\n| Interest signals | +0.10 to +0.20 | - |\n| Meeting/demo quality | +0.05 to +0.15 | -0.05 to -0.15 |\n| Response behavior | +0.05 to +0.15 | -0.10 to -0.20 |\n| Timeline alignment | +0.05 to +0.10 | -0.05 to -0.10 |\n| Budget signals | +0.05 to +0.10 | -0.10 to -0.20 |\n| Competitive situation | +0.05 | -0.10 to -0.15 |\n\n====================\nPRIORITY 2: CONDITIONAL STRUCTURES (BY ACCOUNT TYPE)\n====================\n\n### 5. pilot_health (For POC/Pilot Accounts)\n\n**TRIGGER**: Deal in pilot/POC/trial stage OR deal_name contains \"pilot|poc|trial|test\"\n\n```json\n\"pilot_health\": {\n  \"pilot_status\": \"active|ending_soon|ended|at_risk\",\n  \"pilot_end_date\": \"2026-01-15\",\n  \"days_until_end\": 30,\n  \"churn_signals\": [\n    {\"signal\": \"meeting_cancellations\", \"count\": 2, \"severity\": \"medium\"},\n    {\"signal\": \"champion_unresponsive\", \"days\": 14, \"severity\": \"high\"},\n    {\"signal\": \"internal_reevaluation_mentioned\", \"severity\": \"high\"}\n  ],\n  \"conversion_probability\": 0.60,\n  \"recommended_retention_actions\": [\n    \"Schedule executive check-in\",\n    \"Share ROI calculation\",\n    \"Propose pilot extension\"\n  ]\n}\n```\n\n**CHURN SIGNAL SEVERITY**:\n- high: Champion unresponsive 14+ days, competitor mentioned, budget cut\n- medium: Meeting rescheduled 2+x, delayed decisions, reduced scope\n- low: Normal business delays, vacation periods\n\n---\n\n### 6. stakeholder_map (For Enterprise Accounts)\n\n**TRIGGER**: >2 distinct stakeholders mentioned in activities\n\n```json\n\"stakeholder_map\": {\n  \"champion\": {\n    \"name\": \"André Mooser\",\n    \"role\": \"PMO Director\",\n    \"engagement_level\": \"high|medium|low\",\n    \"last_contact\": \"2025-12-10\"\n  },\n  \"decision_maker\": {\n    \"name\": \"unknown\",\n    \"role\": \"CTO (inferred)\",\n    \"status\": \"engaged|not_engaged|unknown\"\n  },\n  \"other_stakeholders\": [\n    {\"name\": \"Emeline\", \"role\": \"DSI des métiers\", \"relationship_to_deal\": \"Technical evaluator\"}\n  ],\n  \"multi_threading_opportunity\": {\n    \"exists\": true,\n    \"recommendation\": \"Engage Emeline directly on technical aspects\"\n  }\n}\n```\n\n---\n\n### 7. explicit_timing_agreement (When Timing Was Agreed)\n\n**TRIGGER**: Contact OR owner mentioned specific recontact date in activities\n\n```json\n\"explicit_timing_agreement\": {\n  \"exists\": true,\n  \"type\": \"mutual|unilateral_prospect|unilateral_owner\",\n  \"agreed_date_verbatim\": \"début janvier 2026\",\n  \"agreed_date_iso\": \"2026-01-06T09:00:00+01:00\",\n  \"source\": \"linkedin_message\",\n  \"source_date\": \"2025-11-04\",\n  \"prospect_verbatim\": \"Je reprendrai le sujet début de l'année prochaine\",\n  \"our_commitment\": \"On se recontacte tranquillement début janvier\",\n  \"compliance_status\": \"respecting|approaching|at_risk_of_breach\"\n}\n```\n\n**COMPLIANCE_STATUS**:\n- respecting: Current date < agreed_date - 7 days\n- approaching: Current date within 7 days of agreed_date\n- at_risk_of_breach: Current date > agreed_date (we should have reached out)\n\n---\n\n### 8. buying_committee (For B2B Complex Sales)\n\n**TRIGGER**: Champion ≠ decision maker OR approval process mentioned\n\n```json\n\"buying_committee\": {\n  \"champion\": {\n    \"name\": \"Marie-Anne Castro\",\n    \"role\": \"CTO\",\n    \"budget_authority\": false,\n    \"influence_level\": \"high\"\n  },\n  \"required_approvers\": [\n    {\n      \"role\": \"DAF\",\n      \"name\": \"unidentified\",\n      \"status\": \"not_engaged\",\n      \"importance\": \"critical\"\n    },\n    {\n      \"role\": \"COMEX\",\n      \"name\": \"unidentified\",\n      \"status\": \"unknown\",\n      \"importance\": \"high\"\n    }\n  ],\n  \"approval_process\": \"budget_validation|comex_approval|multiple_signatures\",\n  \"next_action_to_advance\": \"Request intro to DAF for budget discussion\"\n}\n```\n\n====================\nPRIORITY 3: SALES INTELLIGENCE STRUCTURES\n====================\n\n### 9. known_objections (When Objections Detected)\n\n**TRIGGER**: Objection mentioned in notes, emails, or via third party\n\n```json\n\"known_objections\": [\n  {\n    \"type\": \"value_perception|budget|timing|authority|need|competition\",\n    \"source\": \"direct|via_third_party\",\n    \"source_detail\": \"Mentioned by Alexis in email 2025-09-05\",\n    \"verbatim\": \"Je ne suis pas sûre de la valeur ajoutée par rapport à notre Excel actuel\",\n    \"date_identified\": \"2025-09-05\",\n    \"status\": \"unaddressed|addressed|resolved|permanent_blocker\",\n    \"impact_on_strategy\": \"Message must demonstrate ROI vs Excel, not features\"\n  }\n]\n```\n\n**CRITICAL**: If known_objections exists, selected_content MUST address it.\n\n---\n\n### 10. deal_contact_separation (For Closed Deals)\n\n**TRIGGER**: Deal closed (won or lost) but contact has ongoing value\n\n```json\n\"deal_contact_status\": {\n  \"deal\": {\n    \"status\": \"open|closed_won|closed_lost|paused\",\n    \"closed_date\": \"2025-09-10\",\n    \"days_since_close\": 98,\n    \"lost_reason\": null\n  },\n  \"contact\": {\n    \"ongoing_value\": \"none|referral_potential|future_opportunity|active_in_other_deal\",\n    \"contact_type\": \"end_user|champion|consultant_referrer|executive_sponsor\",\n    \"nurturing_appropriate\": true,\n    \"relationship_quality\": \"positive|neutral|negative\"\n  }\n}\n```\n\n---\n\n### 11. competitive_context (When Competition Mentioned)\n\n**TRIGGER**: Contact mentioned evaluating alternatives or doing benchmark\n\n```json\n\"competitive_context\": {\n  \"status\": \"sole_vendor|actively_evaluating|competitor_preferred|unknown\",\n  \"competitors_mentioned\": [\"Monday.com\", \"Asana\"],\n  \"evaluation_timeline\": \"Q1 2026\",\n  \"our_positioning\": \"leader|contender|underdog|unknown\",\n  \"differentiation_leveraged\": [\"quarter_plan\", \"capacity_management\"],\n  \"risk_level\": \"low|medium|high\",\n  \"competitive_response_needed\": {\n    \"required\": true,\n    \"recommendation\": \"Emphasize Quarter Plan unique methodology\"\n  }\n}\n```\n\n---\n\n### 12. buying_process (For Long Sales Cycles)\n\n**TRIGGER**: Cycle >3 months with identifiable stages\n\n```json\n\"buying_process\": {\n  \"total_cycle_months\": 4,\n  \"current_stage\": \"budget_validation\",\n  \"stages\": [\n    {\n      \"stage_name\": \"expression_de_besoin\",\n      \"status\": \"completed\",\n      \"completed_date\": \"2025-09-01\"\n    },\n    {\n      \"stage_name\": \"evaluation_technique\",\n      \"status\": \"completed\",\n      \"completed_date\": \"2025-10-15\"\n    },\n    {\n      \"stage_name\": \"budget_validation\",\n      \"status\": \"in_progress\",\n      \"owner\": \"DAF\",\n      \"expected_date\": \"2026-01-15\",\n      \"blocker\": false\n    },\n    {\n      \"stage_name\": \"decision_finale\",\n      \"status\": \"pending\",\n      \"expected_date\": \"2026-02-01\"\n    }\n  ],\n  \"next_milestone\": \"Budget validation by DAF\",\n  \"our_role_in_next_stage\": \"Provide ROI documentation for budget justification\"\n}\n```\n\n====================\nOUTPUT VALIDATION RULES (FINAL CHECK)\n====================\n\n### OUTPUT IS INVALID IF:\n\n1. ❌ `action=\"wait\"` AND `execute_at=\"Not specified\"` AND timing exists in reasoning\n2. ❌ `action=\"wait\"` AND `wait_type` is absent\n3. ❌ `opportunity_strength` present without `opportunity_strength_breakdown`\n4. ❌ Sale cycle >30 days AND `sequence_plan` is empty\n5. ❌ Objection in input data AND not reflected in `known_objections`\n6. ❌ POC/Pilot deal AND `pilot_health` is absent\n7. ❌ Explicit timing in data AND `explicit_timing_agreement` is absent\n8. ❌ `opportunity_strength` ≠ `opportunity_strength_breakdown.calculated_total`\n\n### OUTPUT IS VALID IF:\n\n- ✅ `execute_at` has ISO datetime (or null only for action=\"no_action\")\n- ✅ `wait_type` populated for all wait decisions\n- ✅ `opportunity_strength_breakdown` always present with matching total\n- ✅ `sequence_plan` populated for cycles >30 days\n- ✅ Conditional structures present when triggers match\n- ✅ All confidence_factors populated\n- ✅ risk_factors has at least 1 entry\n- ✅ success_criteria has all three levels filled\n\n---\n\n## LANGUAGE\n\n- If contact communication history is in French, write rationale in French\n- If in English, write in English\n- Message content should match the language used by Content Generator\n\n====================\n🚨 ANTI-HALLUCINATION PROTOCOL (MANDATORY)\n====================\n\nRULE #1: SOURCE OF TRUTH = THIS JSON ONLY\nYou must NEVER affirm a fact that is not present or directly deducible from the JSON provided.\n\n| ALLOWED | FORBIDDEN |\n|---------|-----------|\n| Quote a value present in JSON | Invent a value not present |\n| Deduce a fact from JSON data (e.g., calculated delay) | Assume unverifiable info |\n| Write \"NOT_FOUND\" or \"UNKNOWN\" if field is absent | Fill a field with invented value |\n| Summarize content from metadata.body | Interpret intent beyond the text |\n\nRULE #2: EVIDENCE TRAIL (MANDATORY)\nFor EVERY claim you make, you MUST be able to point to the exact JSON path.\n\nExample of GOOD evidence:\n\\`\\`\\`\nClaim: \"Last OUTBOUND was on 2025-08-27\"\nEvidence: activities[0].recorded_on = \"2025-08-27T12:02:43+00:00\"\n          activities[0].direction = \"OUTBOUND\" ✓\n\\`\\`\\`\n\nExample of BAD (hallucination):\n\\`\\`\\`\nClaim: \"Contact showed interest in pricing\"\nEvidence: ??? (not explicitly stated in any INBOUND message)\n→ THIS IS HALLUCINATION - FORBIDDEN\n\\`\\`\\`\n\nRULE #3: WHEN IN DOUBT, LEAVE IT OUT\nIf you cannot point to a specific JSON field for a claim → DO NOT MAKE THE CLAIM."
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.agent",
-        "typeVersion": 2.2,
-        "position": [
-          1904,
-          48
-        ],
-        "id": "f8956e24-e9ea-482b-93c7-9a155f191362",
-        "name": "Orchestrator Synthesis",
-        "executeOnce": true
-      },
-      {
-        "parameters": {
-          "model": {
-            "__rl": true,
-            "value": "claude-sonnet-4-20250514",
-            "mode": "list",
-            "cachedResultName": "Claude Sonnet 4"
-          },
-          "options": {
-            "maxTokensToSample": 20000,
-            "temperature": 0.2
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-        "typeVersion": 1.3,
-        "position": [
-          496,
-          192
-        ],
-        "id": "7c153553-5dd5-47cc-9e53-a45bfbd4995f",
-        "name": "Sonnet 4 Model",
-        "credentials": {
-          "anthropicApi": {
-            "id": "WR9IYE0cy2Srym3w",
-            "name": "Anthropic account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "model": {
-            "__rl": true,
-            "value": "claude-opus-4-5-20251101",
-            "mode": "list",
-            "cachedResultName": "Claude Opus 4.5"
-          },
-          "options": {
-            "maxTokensToSample": 20000,
-            "temperature": 0.6
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-        "typeVersion": 1.3,
-        "position": [
-          1904,
-          224
-        ],
-        "id": "4fc8a0a6-a901-4e20-8a8e-5a19da203d3f",
-        "name": "Opus Model",
-        "credentials": {
-          "anthropicApi": {
-            "id": "WR9IYE0cy2Srym3w",
-            "name": "Anthropic account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "jsCode": "// Obtener el output raw del agente\nconst rawOutput = $input.first().json.output;\n\n// Limpiar los backticks de markdown si existen\nlet cleanJson = rawOutput;\nif (typeof rawOutput === 'string') {\n  cleanJson = rawOutput\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n}\n\n// Parsear el JSON\nlet input;\ntry {\n  input = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  const jsonMatch = cleanJson.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    input = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Could not parse Synthesis output: ' + e.message);\n  }\n}\n\nconst decision = input.final_decision;\n\nif (!decision) {\n  throw new Error('Missing final_decision in Synthesis output');\n}\n\n// Obtener datos del owner y contacto\nlet ownerName = '';\nlet contactLinkedinUrl = '';\n\n// Intentar desde Webhook\ntry {\n  const webhookData = $('Webhook').first().json;\n  \n  // LinkedIn del CONTACTO (de contact_info)\n  contactLinkedinUrl = webhookData.body?.contact_info?.linkedin_url || '';\n  \n  // Nombre del OWNER (de la primera activity)\n  const activities = webhookData.body?.activities || [];\n  for (const activity of activities) {\n    if (activity.owner && activity.owner.owner_name) {\n      ownerName = activity.owner.owner_name;\n      break;\n    }\n  }\n} catch (e) {\n  // Si falla Webhook, intentar desde Merge\n  try {\n    const mergeData = $('Merge').first().json;\n    \n    contactLinkedinUrl = mergeData.contact_info?.linkedin_url || '';\n    \n    const activities = mergeData.activities || [];\n    for (const activity of activities) {\n      if (activity.owner && activity.owner.owner_name) {\n        ownerName = activity.owner.owner_name;\n        break;\n      }\n    }\n  } catch (e2) {\n    console.log('Could not extract data from any source');\n  }\n}\n\nreturn {\n  json: {\n    decision: {\n      // Identificación\n      orchestrator_id: input.orchestrator_id || 'Not specified',\n      phase: input.phase || 'Not specified',\n      contact_fullname: decision.contact_fullname || '',\n      \n      // Owner y Contact info\n      owner_name: ownerName || 'Not specified',\n      contact_linkedin_url: contactLinkedinUrl || 'Not specified',\n      \n      // Acción principal\n      action: decision.action || 'Not specified',\n      selected_channel: decision.selected_channel || 'Not specified',\n      \n      // Contenido seleccionado\n      message: decision.selected_content?.message || 'No recommended message.',\n      subject: decision.selected_content?.subject  || '',\n      tone: decision.selected_content?.tone || '',\n      content_source: decision.selected_content?.content_source || '',\n      \n      // Timing de ejecución\n      execute_at: decision.execution_timing?.execute_at || 'Not specified',\n      timezone: decision.execution_timing?.timezone || 'Not specified',\n      timing_rationale: decision.execution_timing?.timing_rationale || 'Not specified',\n      \n      // Secuencia\n      is_part_of_sequence: decision.sequence_instructions?.is_part_of_sequence || false,\n      current_step: decision.sequence_instructions?.current_step || 1,\n      total_steps: decision.sequence_instructions?.total_steps || 1,\n      sequence_plan: decision.sequence_instructions?.sequence_plan || [],\n      \n      // Rationale\n      overall_strategy: decision.rationale?.overall_strategy || '',\n      channel_reasoning: decision.rationale?.channel_reasoning || '',\n      content_reasoning: decision.rationale?.content_reasoning || '',\n      timing_reasoning: decision.rationale?.timing_reasoning || '',\n      sequence_reasoning: decision.rationale?.sequence_reasoning || '',\n      \n      // Confidence factors\n      relationship_clarity: decision.rationale?.confidence_factors?.relationship_clarity || 0,\n      opportunity_strength: decision.rationale?.confidence_factors?.opportunity_strength || 0,\n      channel_certainty: decision.rationale?.confidence_factors?.channel_certainty || 0,\n      content_quality: decision.rationale?.confidence_factors?.content_quality || 0,\n      timing_accuracy: decision.rationale?.confidence_factors?.timing_accuracy || 0,\n      \n      // Riesgos y criterios\n      risk_factors: decision.risk_factors || [],\n      success_criteria_immediate: decision.success_criteria?.immediate || '',\n      success_criteria_short_term: decision.success_criteria?.short_term || '',\n      success_criteria_medium_term: decision.success_criteria?.medium_term || '',\n      \n      // Metadata\n      synthesis_confidence: input.metadata?.synthesis_confidence || 0,\n      agents_wave_1: input.metadata?.agents_consulted?.wave_1 || [],\n      agents_wave_2: input.metadata?.agents_consulted?.wave_2 || [],\n      iterations_total: input.metadata?.iterations_total || 0,\n      processing_notes: input.metadata?.processing_notes || ''\n    }\n  }\n};"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2208,
-          48
-        ],
-        "id": "26131a77-d569-4528-b24b-af2d06e0566e",
-        "name": "Parse JSON"
-      },
-      {
-        "parameters": {
-          "rules": {
-            "values": [
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": true,
-                    "leftValue": "",
-                    "typeValidation": "strict",
-                    "version": 2
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.decision.action }}",
-                      "rightValue": "retry",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      },
-                      "id": "a788d6c5-ff93-4a48-902c-006a5c83018d"
-                    }
-                  ],
-                  "combinator": "and"
-                },
-                "renameOutput": true,
-                "outputKey": "retry"
-              },
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": true,
-                    "leftValue": "",
-                    "typeValidation": "strict",
-                    "version": 2
-                  },
-                  "conditions": [
-                    {
-                      "id": "7f05ea6d-271e-4628-8501-2d96b7092df8",
-                      "leftValue": "={{ $json.decision.action }}",
-                      "rightValue": "continue",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals",
-                        "name": "filter.operator.equals"
-                      }
-                    }
-                  ],
-                  "combinator": "and"
-                },
-                "renameOutput": true,
-                "outputKey": "continue"
-              }
-            ]
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.switch",
-        "typeVersion": 3.3,
-        "position": [
-          1648,
-          32
-        ],
-        "id": "5e12d69c-e0be-4d7a-a8be-1d686a203527",
-        "name": "Retry?"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Parse Evaluation Decision - IMPROVED VERSION\nconst evaluationOutput = $input.first().json;\nconst constants = $('Constants').first().json;\n\nlet rawOutput = evaluationOutput.output || evaluationOutput.text || '';\nlet parsedDecision = null;\nlet action = 'continue';\nlet retryInstructions = null;\nlet parseError = null;\n\ntry {\n  if (typeof rawOutput === 'string') {\n    let cleanOutput = rawOutput.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    const jsonMatch = cleanOutput.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsedDecision = JSON.parse(jsonMatch[0]);\n    }\n  } else if (typeof rawOutput === 'object' && rawOutput !== null) {\n    parsedDecision = rawOutput;\n  }\n\n  if (parsedDecision) {\n    const evalAction = parsedDecision.evaluation_decision?.action;\n    if (evalAction === 'retry') {\n      action = 'retry';\n      retryInstructions = parsedDecision.evaluation_decision?.retry_instructions || null;\n    } else {\n      action = 'continue';\n    }\n  }\n} catch (e) {\n  parseError = e.message;\n}\n\nconst currentIteration = constants.iteration_count || 1;\nconst maxIterations = constants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2;\n\nif (currentIteration >= maxIterations) {\n  action = 'continue';\n}\n\nreturn {\n  json: {\n    decision: {\n      action: action,\n      current_iteration: currentIteration,\n      max_iterations: maxIterations,\n      should_retry: action === 'retry' && currentIteration < maxIterations,\n      retry_instructions: retryInstructions\n    },\n    debug: {\n      parse_error: parseError,\n      found_action: parsedDecision?.evaluation_decision?.action || 'NOT_FOUND'\n    },\n    evaluation_output: evaluationOutput,\n    wave1_results: $('Orchestrator Distribution').first().json,\n    parsed_decision: parsedDecision\n  }\n};\n"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1472,
-          32
-        ],
-        "id": "cfd69364-0cfb-4934-8082-1fe866f191b3",
-        "name": "Parse Evaluation Decision"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Prepare Retry Context\n// Prepara el contexto para re-ejecutar Wave 1 con instrucciones de mejora\n\nconst input = $input.first().json;\n\n// Obtener datos originales - buscar en múltiples fuentes posibles\nlet originalData;\ntry {\n  // Intentar obtener del Input Validator (más confiable)\n  originalData = $('Input Validator').first().json;\n} catch (e) {\n  // Fallback al Merge\n  originalData = $('Merge').first().json;\n}\n\nlet originalConstants;\ntry {\n  originalConstants = $('Constants').first().json;\n} catch (e) {\n  originalConstants = {\n    SEMANTIC_CONSTANTS: { MAX_RETRY_ITERATIONS: 2 },\n    session_id: Date.now(),\n    iteration_count: 1\n  };\n}\n\n// Incrementar contador\nconst newIterationCount = (input.decision.current_iteration || 1) + 1;\n\n// Construir el contexto de retry\nconst retryContext = {\n  // Datos del contacto (desde Input Validator)\n  contact_info: originalData.contact_info,\n  activities: originalData.activities,\n  stats: originalData.stats,\n  validation: originalData.validation,\n  conversation_analysis: originalData.conversation_analysis,\n  _normalized: originalData._normalized,\n  \n  // Constants actualizados\n  SEMANTIC_CONSTANTS: originalConstants.SEMANTIC_CONSTANTS,\n  session_id: originalConstants.session_id,\n  iteration_count: newIterationCount,\n  \n  // Meta de retry - CRÍTICO para que Distribution lo detecte\n  retry_meta: {\n    is_retry: true,\n    iteration: newIterationCount,\n    max_iterations: originalConstants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2,\n    previous_wave1_results: input.wave1_results?.output || {},\n    retry_instructions: input.decision.retry_instructions || {},\n    retry_reason: \"Evaluation Orchestrator requested retry for improved analysis\"\n  }\n};\n\nreturn { json: retryContext };"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1648,
-          -176
-        ],
-        "id": "2534228c-45a0-464a-b7ff-54518f542338",
-        "name": "Prepare Retry Context"
-      },
-      {
-        "parameters": {
-          "sessionIdType": "customKey",
-          "sessionKey": "={{ $('Merge').last().json.session_id }}",
-          "tableName": "n8n_orchestrator_synthesis",
-          "contextWindowLength": 2000
-        },
-        "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
-        "typeVersion": 1.3,
-        "position": [
-          2000,
-          320
-        ],
-        "id": "91c23484-5e2e-4c0d-b033-0efe10d912a4",
-        "name": "AI_sales_agents Memory",
-        "credentials": {
-          "postgres": {
-            "id": "9t3LCP46SMBNPxAk",
-            "name": "AI_sales_agents Supabase"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "sessionIdType": "customKey",
-          "sessionKey": "={{ $('Merge').last().json.session_id }}",
-          "tableName": "n8n_orchestrator_evaluation",
-          "contextWindowLength": 2000
-        },
-        "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
-        "typeVersion": 1.3,
-        "position": [
-          1280,
-          304
-        ],
-        "id": "338fc586-8252-460a-a7a2-d4fdf46570f1",
-        "name": "AI_sales_agents Memory1",
-        "credentials": {
-          "postgres": {
-            "id": "9t3LCP46SMBNPxAk",
-            "name": "AI_sales_agents Supabase"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "sessionIdType": "customKey",
-          "sessionKey": "={{ $('Merge').last().json.session_id }}",
-          "tableName": "n8n_orchestrator_distribution",
-          "contextWindowLength": 2000
-        },
-        "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
-        "typeVersion": 1.3,
-        "position": [
-          592,
-          288
-        ],
-        "id": "3b4a9f41-030b-4509-a88f-c56669a486f5",
-        "name": "AI_sales_agents Memory2",
-        "credentials": {
-          "postgres": {
-            "id": "9t3LCP46SMBNPxAk",
-            "name": "AI_sales_agents Supabase"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={\n  \"message\": \"Workflow was started! This process takes about 7 minutes, please wait...\",\n  \"session_id\": \"{{ $json.session_id }}\"\n}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.4,
-        "position": [
-          112,
-          160
-        ],
-        "id": "5fe5291a-fbef-4644-bf31-ee5476163c0e",
-        "name": "Respond to Webhook with session_id"
-      },
-      {
-        "parameters": {
-          "tableId": "final_decision",
-          "fieldsUi": {
-            "fieldValues": [
-              {
-                "fieldId": "session_id",
-                "fieldValue": "={{ $('Merge').last().json.session_id }}"
-              },
-              {
-                "fieldId": "decision",
-                "fieldValue": "={{ $json.decision }}"
-              },
-              {
-                "fieldId": "contact_hubspot_id",
-                "fieldValue": "={{ $('Merge').last().json.contact_hubspot_id }}"
-              }
-            ]
-          }
-        },
-        "type": "n8n-nodes-base.supabase",
-        "typeVersion": 1,
-        "position": [
-          2416,
-          48
-        ],
-        "id": "7c5f9684-de40-42ee-b88a-2a423d595c07",
-        "name": "Save final decision into table",
-        "retryOnFail": true,
-        "credentials": {
-          "supabaseApi": {
-            "id": "7YYll9c7CXOe1KjY",
-            "name": "AI_Sales_supabase"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "operation": "update",
-          "tableId": "n8n_orchestrator_synthesis",
-          "matchType": "allFilters",
-          "filters": {
-            "conditions": [
-              {
-                "keyName": "session_id",
-                "condition": "eq",
-                "keyValue": "={{ $('Merge').last().json.session_id }}"
-              }
-            ]
-          },
-          "fieldsUi": {
-            "fieldValues": [
-              {
-                "fieldId": "final_decision",
-                "fieldValue": "={{ $json.decision }}"
-              }
-            ]
-          }
-        },
-        "type": "n8n-nodes-base.supabase",
-        "typeVersion": 1,
-        "position": [
-          2416,
-          -144
-        ],
-        "id": "a3a98a26-b1c1-4653-90ad-6cce96e026ac",
-        "name": "Save final decision reference",
-        "credentials": {
-          "supabaseApi": {
-            "id": "7YYll9c7CXOe1KjY",
-            "name": "AI_Sales_supabase"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://hooks.zapier.com/hooks/catch/23843453/ufit1aq/",
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ $json }}",
-          "options": {
-            "batching": {
-              "batch": {
-                "batchSize": 0,
-                "batchInterval": 0
-              }
-            }
-          }
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          2624,
-          48
-        ],
-        "id": "d581ef05-2fea-423f-b582-e8bac6685c30",
-        "name": "Send to Zapier for Slack"
-      },
-      {
-        "parameters": {
-          "operation": "getAll",
-          "tableId": "final_decision",
-          "limit": 10,
-          "filterType": "string",
-          "filterString": "and=(user_slack_message.not.is.null,user_slack_message.neq.,type_of_validation.not.is.null,type_of_validation.neq.)&order=created_at.desc"
-        },
-        "type": "n8n-nodes-base.supabase",
-        "typeVersion": 1,
-        "position": [
-          816,
-          112
-        ],
-        "id": "00252f08-7852-4eac-a500-923ace280c19",
-        "name": "Get historial recomendations",
-        "executeOnce": true,
-        "alwaysOutputData": true,
-        "credentials": {
-          "supabaseApi": {
-            "id": "7YYll9c7CXOe1KjY",
-            "name": "AI_Sales_supabase"
-          }
-        }
-      },
-      {
-        "parameters": {},
-        "type": "n8n-nodes-base.merge",
-        "typeVersion": 3.2,
-        "position": [
-          976,
-          32
-        ],
-        "id": "613a7cef-5871-46f8-970a-fb8979dec526",
-        "name": "Merge2"
-      },
-      {
-        "parameters": {
-          "model": {
-            "__rl": true,
-            "value": "claude-opus-4-5-20251101",
-            "mode": "list",
-            "cachedResultName": "Claude Opus 4.5"
-          },
-          "options": {
-            "maxTokensToSample": 20000,
-            "temperature": 0.4
-          }
-        },
-        "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-        "typeVersion": 1.3,
-        "position": [
-          1184,
-          208
-        ],
-        "id": "483c92aa-0d8c-489b-a62b-071e0428595c",
-        "name": "Opus 4.5 Model2",
-        "credentials": {
-          "anthropicApi": {
-            "id": "WR9IYE0cy2Srym3w",
-            "name": "Anthropic account"
-          }
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Input Validator",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "Constants",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Input Validator": {
-        "main": [
-          [
-            {
-              "node": "Merge",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Constants": {
-        "main": [
-          [
-            {
-              "node": "Respond to Webhook with session_id",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Merge": {
-        "main": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Context Analyzer": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Opportunity Detector": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "State Analyzer": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Orchestrator Distribution": {
-        "main": [
-          [
-            {
-              "node": "Get historial recomendations",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "Merge2",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Timing Strategist": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Orchestrator Evaluation": {
-        "main": [
-          [
-            {
-              "node": "Parse Evaluation Decision",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Channel Selector": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Evaluation",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Content Generator": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Evaluation",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Sequence Strategist": {
-        "ai_tool": [
-          [
-            {
-              "node": "Orchestrator Evaluation",
-              "type": "ai_tool",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Orchestrator Synthesis": {
-        "main": [
-          [
-            {
-              "node": "Parse JSON",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Sonnet 4 Model": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Orchestrator Distribution",
-              "type": "ai_languageModel",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Opus Model": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Orchestrator Synthesis",
-              "type": "ai_languageModel",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse JSON": {
-        "main": [
-          [
-            {
-              "node": "Save final decision reference",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "Save final decision into table",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Retry?": {
-        "main": [
-          [
-            {
-              "node": "Prepare Retry Context",
-              "type": "main",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
           ],
-          [
-            {
-              "node": "Orchestrator Synthesis",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "Parse Evaluation Decision": {
-        "main": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        480
+      ],
+      "id": "d30296e8-56c5-4529-b147-a5fc8bda24c2",
+      "name": "Context Analyzer"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Opportunity Detector) for detect opportunities for meaningful outreach by analyzing engagement signals.",
+        "workflowId": {
+          "__rl": true,
+          "value": "x8FhUOAPaob2UAsD",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/x8FhUOAPaob2UAsD",
+          "cachedResultName": "Opportunity Detector"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{$json.toJsonString()}}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Retry?",
-              "type": "main",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "Prepare Retry Context": {
-        "main": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        624
+      ],
+      "id": "666509ba-ed40-410f-a496-ee5b175bd5f6",
+      "name": "Opportunity Detector"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (State Analyzer) for analyze the current state of conversations across all communication channels to determine who should act next.",
+        "workflowId": {
+          "__rl": true,
+          "value": "p5j7uHQGG4MXtzDQ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/p5j7uHQGG4MXtzDQ",
+          "cachedResultName": "State Analyzer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.toJsonString() }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Orchestrator Distribution",
-              "type": "main",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "AI_sales_agents Memory": {
-        "ai_memory": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        784,
+        480
+      ],
+      "id": "e8bf58b3-6660-4c7a-831b-fdb9dca1a395",
+      "name": "State Analyzer"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CONTACT DATA TO ANALYZE:\n{{ $json.toJsonString() }}\n\n---\n\nCURRENT DATE/TIME: {{ $now.toISO() }}\n\n---\n\nYOUR TASK:\n\n1. Call \"Context Analyzer\" tool with the contact data above\n2. Call \"Opportunity Detector\" tool with the contact data above\n3. Call \"State Analyzer\" tool with the contact data above\n4. Call \"Timing Strategist\" tool with the contact data above\n\nAFTER calling all 4 tools, consolidate their responses into your final JSON output.\n\n⚠️ YOU MUST CALL ALL 4 TOOLS BEFORE RESPONDING.\n⚠️ DO NOT generate a response without calling the tools.\n",
+        "options": {
+          "systemMessage": "=You are the \"Distribution Orchestrator\" for Wave 1.\n\nYOUR ONLY JOB: Call 4 tools and collect their responses.\n\n====================\nMANDATORY TOOL CALLS\n====================\n\nYou MUST call these 4 tools IN THIS EXACT ORDER:\n\n1. **Context Analyzer** - Call FIRST\n2. **Opportunity Detector** - Call SECOND\n3. **State Analyzer** - Call THIRD\n4. **Timing Strategist** - Call FOURTH\n\n⚠️ YOU MUST CALL ALL 4 TOOLS. DO NOT SKIP ANY.\n⚠️ DO NOT generate a response without calling the tools first.\n⚠️ EACH tool call should pass the complete input data.\n\n====================\nHOW TO CALL EACH TOOL\n====================\n\nFor EACH tool, pass the complete JSON data you received as input.\nThe tools will analyze the data and return their results.\n\n====================\nAFTER CALLING ALL 4 TOOLS\n====================\n\nOnce you have responses from ALL 4 tools, output this JSON:\n\n{\n  \"agent_id\": \"distribution_orchestrator\",\n  \"phase\": \"wave1\",\n  \"wave1_results\": {\n    \"context_relationship_analyzer\": <RESPONSE FROM TOOL 1>,\n    \"opportunity_detector\": <RESPONSE FROM TOOL 2>,\n    \"state_analyzer\": <RESPONSE FROM TOOL 3>,\n    \"timing_strategist\": <RESPONSE FROM TOOL 4>\n  },\n  \"execution_summary\": {\n    \"tools_called\": 4,\n    \"tools_succeeded\": 4\n  }\n}\n\n====================\nCRITICAL RULES\n====================\n\n1. CALL ALL 4 TOOLS BEFORE generating your final output\n2. DO NOT invent tool responses - use the ACTUAL responses\n3. DO NOT skip any tool\n4. DO NOT analyze the data yourself - let the tools do it\n5. Your final output must be valid JSON only (no markdown)"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        496,
+        16
+      ],
+      "id": "1649a99e-b34e-4aec-9e99-c692ad0187b6",
+      "name": "Orchestrator Distribution",
+      "retryOnFail": true,
+      "waitBetweenTries": 500,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Timing Strategist) for determine optimal timing for outreach by analyzing temporal patterns and response behaviors.\n",
+        "workflowId": {
+          "__rl": true,
+          "value": "SA9CbSZ6gG4VbLr3",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SA9CbSZ6gG4VbLr3",
+          "cachedResultName": "Timing Strategist"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.toJsonString() }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Orchestrator Synthesis",
-              "type": "ai_memory",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "AI_sales_agents Memory1": {
-        "ai_memory": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        784,
+        624
+      ],
+      "id": "9c909ff4-c782-412a-b186-6a109af04ddc",
+      "name": "Timing Strategist"
+    },
+    {
+      "parameters": {
+        "content": "## WAVE 1\nAnalysis",
+        "height": 320,
+        "width": 560,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        368,
+        448
+      ],
+      "id": "6296cc57-5a2b-414c-b1b5-288ef9d40fa1",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=### INPUT - Wave 1 Results:\n{{ $('Orchestrator Distribution').first().json.output }}\n---\n### HISTORICAL VALIDATED EXAMPLES (Learn from past successful decisions)\n{{ JSON.stringify($('Get historial recomendations').all()) || 'empty for now' }}\n---\n\n## YOUR TASK\n\n1. **CALL ALL THREE TOOLS** (Channel Selector, Content Generator, Sequence Strategist)\n2. **EVALUATE** the quality of results\n3. **DECIDE**: continue or retry\n\nCurrent iteration: {{ $('Constants').first().json.iteration_count }} of {{ $('Constants').first().json.SEMANTIC_CONSTANTS.MAX_RETRY_ITERATIONS }}\n\n---\n\n## CRITICAL: Output this EXACT JSON structure\n\n⚠️ PUT evaluation_decision FIRST - this is the most important field!\n\n{\n  \"agent_id\": \"evaluation_orchestrator\",\n  \"evaluation_decision\": {\n    \"action\": \"continue\",\n    \"reasoning\": \"Brief explanation of why continue or retry\",\n    \"retry_instructions\": null\n  },\n  \"quality_scores\": {\n    \"wave1_coherence\": 0.8,\n    \"wave2_coherence\": 0.8,\n    \"cross_wave_alignment\": 0.8\n  },\n  \"wave2_results\": {\n    \"channel_selector\": {\n      \"recommended_channel\": \"EMAIL\",\n      \"fallback_channel\": \"LINKEDIN\",\n      \"confidence\": 0.85\n    },\n    \"content_generator\": {\n      \"should_generate\": true,\n      \"channels_with_content\": [\"EMAIL\", \"LINKEDIN\"],\n      \"signature_verified\": true\n    },\n    \"sequence_strategist\": {\n      \"is_sequence\": false,\n      \"sequence_type\": \"standalone\",\n      \"total_touches\": 1\n    }\n  },\n  \"issues_found\": [],\n  \"strengths_found\": []\n}\n\n---\n\n## DECISION RULES\n\n### Set action = \"continue\" when:\n- Results are coherent (scores >= 0.6)\n- No critical contradictions\n- iteration >= max iterations (MANDATORY)\n\n### Set action = \"retry\" when (AND iteration < max):\n- Critical contradictions between agents\n- Key data was missed\n- You can provide SPECIFIC retry_instructions\n\n### If retry, provide retry_instructions:\n{\n  \"action\": \"retry\",\n  \"reasoning\": \"Specific reason\",\n  \"retry_instructions\": {\n    \"context_relationship_analyzer\": \"Specific instruction or null\",\n    \"opportunity_detector\": \"Specific instruction or null\",\n    \"state_analyzer\": \"Specific instruction or null\",\n    \"timing_strategist\": \"Specific instruction or null\"\n  }\n}\n\n---\n\n## IMPORTANT RULES\n\n1. **evaluation_decision.action MUST be \"continue\" or \"retry\"** - no other values\n2. **If iteration >= max, action MUST be \"continue\"**\n3. **DO NOT include raw_output from tools** - only the extracted/summarized data\n4. **Keep the response concise** - avoid repeating full tool outputs\n\n⚠️ CRITICAL OUTPUT FORMAT:\n- PURE JSON only (no markdown, no ```)\n- Start with { and end with }\n- evaluation_decision MUST be near the top\n",
+        "options": {
+          "systemMessage": "=# Evaluation Orchestrator\n**Role**: Wave 2 Executor + Quality Controller\n\nYou have TWO responsibilities:\n1. **EXECUTE Wave 2**: Call the 3 action tools and capture results\n2. **DECIDE**: Continue to Synthesis or retry Wave 1\n\n---\n\n## PHASE 1: CALL WAVE 2 TOOLS\n\nCall these three tools IN ORDER:\n\n1. **Channel Selector** - Pass Wave 1 results\n2. **Content Generator** - Pass Wave 1 results + Channel output\n3. **Sequence Strategist** - Pass Wave 1 results + previous outputs\n\n---\n\n## PHASE 2: EVALUATE & DECIDE\n\nAfter calling all tools:\n\n### Check Wave 1 Quality\n- Are confidence levels >= 0.6?\n- Are analyses coherent with each other?\n- Any contradictions between agents?\n\n### Check Wave 2 Quality\n- Did Channel Selector provide a valid channel?\n- Did Content Generator produce content for recommended channel?\n- Does Sequence plan align with relationship stage?\n\n---\n\n## PHASE 3: OUTPUT YOUR DECISION\n\n### OUTPUT FORMAT (CRITICAL)\n\nYour output MUST be valid JSON with this structure:\n\n```\n{\n  \"agent_id\": \"evaluation_orchestrator\",\n  \"evaluation_decision\": {\n    \"action\": \"continue\",\n    \"reasoning\": \"Brief explanation\",\n    \"retry_instructions\": null\n  },\n  \"quality_scores\": {\n    \"wave1_coherence\": 0.8,\n    \"wave2_coherence\": 0.8,\n    \"cross_wave_alignment\": 0.8\n  },\n  \"wave2_results\": {\n    \"channel_selector\": { ... summary ... },\n    \"content_generator\": { ... summary ... },\n    \"sequence_strategist\": { ... summary ... }\n  },\n  \"issues_found\": [],\n  \"strengths_found\": []\n}\n```\n\n### CRITICAL RULES FOR evaluation_decision:\n\n1. **action** MUST be exactly \"continue\" or \"retry\" (no other values)\n2. **evaluation_decision MUST be near the TOP of your output** (not at the end)\n3. If iteration >= max_iterations, action MUST be \"continue\"\n\n### When to RETRY:\n- Critical contradictions in Wave 1\n- Key patterns were missed\n- You have SPECIFIC improvement instructions\n\n### When to CONTINUE:\n- Results are coherent (scores >= 0.6)\n- iteration >= max_iterations (MANDATORY continue)\n- Marginal gains don't justify retry\n\n---\n\n## RETRY INSTRUCTIONS FORMAT\n\nIf action = \"retry\", provide specific instructions:\n\n```\n\"retry_instructions\": {\n  \"context_relationship_analyzer\": \"Re-check stakeholder mentions in meeting notes\",\n  \"opportunity_detector\": null,\n  \"state_analyzer\": \"Recalculate days since last interaction\",\n  \"timing_strategist\": null\n}\n```\n\n✅ GOOD: \"Re-evaluate relationship: 3 messages in 10 days = WARM not COLD\"\n❌ BAD: \"Try again with more attention\" (too vague)\n\n---\n\n## IMPORTANT\n\n1. **DO NOT include full raw_output from tools** - only summarized data\n2. **Keep response concise** - the parser needs to find evaluation_decision\n3. **evaluation_decision.action is the MOST IMPORTANT field** - make sure it's present\n4. Output PURE JSON only (no markdown code blocks)"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1184,
+        32
+      ],
+      "id": "2a5eeb73-89a6-426a-b3f1-003ce866d759",
+      "name": "Orchestrator Evaluation",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "content": "## WAVE 2\nAction",
+        "height": 320,
+        "width": 560,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        464
+      ],
+      "id": "95a8fd81-2ab6-494c-9bc3-81400b2cb351",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Channel Selector) for analyze relationship context, conversation state, and channel performance to recommend where to reach out.",
+        "workflowId": {
+          "__rl": true,
+          "value": "IranprNKAkWymI1n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IranprNKAkWymI1n",
+          "cachedResultName": "Channel Selector"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $('Webhook').item.json.body.toJsonString() }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Orchestrator Evaluation",
-              "type": "ai_memory",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "AI_sales_agents Memory2": {
-        "ai_memory": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        496
+      ],
+      "id": "cd1b91c8-0a56-4a6c-8e29-8a7ca6a6597b",
+      "name": "Channel Selector"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Content Generator) for You generate messages for ALL possible channels.",
+        "workflowId": {
+          "__rl": true,
+          "value": "SD8ssifoO3WmgV6E",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SD8ssifoO3WmgV6E",
+          "cachedResultName": "Content Generator"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $('Webhook').item.json.body.toJsonString() }}",
+            "recomendations": "={{ JSON.stringify($('Get historial recomendations').all()) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
             {
-              "node": "Orchestrator Distribution",
-              "type": "ai_memory",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Respond to Webhook with session_id": {
-        "main": [
-          [
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
             {
-              "node": "Merge",
-              "type": "main",
-              "index": 1
+              "id": "recomendations",
+              "displayName": "recomendations",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "Save final decision into table": {
-        "main": [
-          [
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        640
+      ],
+      "id": "0d3e86ed-e521-48e2-bf93-9691ee8ae389",
+      "name": "Content Generator"
+    },
+    {
+      "parameters": {
+        "description": "Call this tool (Sequence Strategist) for determine if outreach should be standalone or part of a multi-touch sequence.",
+        "workflowId": {
+          "__rl": true,
+          "value": "9yaALVGtzyMSW3tm",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9yaALVGtzyMSW3tm",
+          "cachedResultName": "Sequence Strategist"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $('Webhook').item.json.body.toJsonString() }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
             {
-              "node": "Send to Zapier for Slack",
-              "type": "main",
-              "index": 0
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
-          ]
-        ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "Save final decision reference": {
-        "main": [
-          []
-        ]
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1504,
+        496
+      ],
+      "id": "c4ba5bd4-3995-4ff5-b74f-4871e0b60445",
+      "name": "Sequence Strategist"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "==### WAVE 1 RESULTS (Analysis Phase):\n{{ $('Orchestrator Distribution').first().json.output }}\n---\n### WAVE 2 RESULTS (Action Phase):\n{{ $('Orchestrator Evaluation').first().json.output }}\n---\n### CONTACT INFO:\n{{ $('Input Validator').first().json.contact_info }}\n---\n### TODAY'S DATE: {{ $today.toString() }}\n---\n\n## YOUR TASK\nSynthesize ALL agent results into ONE final actionable recommendation.\nConsider these inputs in order of priority:\n1. **Wave 1 analysis**: Relationship stage, opportunities, conversation state, optimal timing\n2. **Wave 2 actions**: Selected channel, generated content, sequence strategy\n3. **Historical patterns**: What worked before with similar contacts (if examples available)\n4. **Contact context**: Specific situation and communication history\n\n## CRITICAL VALIDATION BEFORE OUTPUT\nBefore generating output, verify:\n1. If action=\"wait\" → execute_at MUST have ISO datetime (NOT \"Not specified\")\n2. If action=\"wait\" → wait_type MUST be populated\n3. opportunity_strength MUST have opportunity_strength_breakdown with matching calculated_total\n4. If sale cycle >30 days OR nurturing → sequence_plan MUST NOT be empty\n5. If POC/Pilot detected → pilot_health MUST be included\n6. If explicit timing agreement in data → explicit_timing_agreement MUST be included\n\nYou MUST output valid JSON with this EXACT structure (no markdown, no backticks):\n{\n  \"orchestrator_id\": \"orchestrator_synthesis\",\n  \"phase\": \"synthesis\",\n  \"final_decision\": {\n    \"contact_fullname\": \"...\",\n    \"action\": \"send_message|schedule_call|wait|no_action|break_up\",\n    \"selected_channel\": \"linkedin|email|whatsapp|phone|null\",\n    \"selected_content\": {\n      \"message\": \"...\",\n      \"subject\": \"...\" (only for email),\n      \"tone\": \"...\",\n      \"content_source\": \"wave2_content_generator\"\n    },\n    \"execution_timing\": {\n      \"execute_at\": \"ISO8601 datetime (MANDATORY if timing in reasoning - NEVER 'Not specified')\",\n      \"reevaluate_at\": \"ISO8601 datetime (for action=wait, when to re-check)\",\n      \"timezone\": \"Europe/Paris\",\n      \"timing_rationale\": \"...\"\n    },\n    \"wait_type\": {\n      \"type\": \"prospect_timing|prospect_validation|meeting_scheduled|pilot_review|explicit_request|long_cycle|ghosting\",\n      \"risk_level\": \"low|medium|high|critical\",\n      \"trigger_event\": \"What caused the wait\",\n      \"reevaluation_trigger\": \"What should trigger re-evaluation\"\n    },\n    \"sequence_instructions\": {\n      \"is_part_of_sequence\": true|false,\n      \"current_step\": 1,\n      \"total_steps\": 0,\n      \"sequence_plan\": [\n        {\n          \"step\": 1,\n          \"trigger\": \"reevaluation_date|no_response|event|manual\",\n          \"channel\": \"email|linkedin|phone|whatsapp\",\n          \"action_type\": \"check_in|follow_up|value_share|break_up\",\n          \"planned_date\": \"ISO8601 datetime\",\n          \"status\": \"ready_to_execute|pending|conditional\"\n        }\n      ]\n    },\n    \"rationale\": {\n      \"overall_strategy\": \"...\",\n      \"channel_reasoning\": \"...\",\n      \"content_reasoning\": \"...\",\n      \"timing_reasoning\": \"...\",\n      \"sequence_reasoning\": \"...\",\n      \"historical_alignment\": \"How this decision aligns with past validated examples (or 'No historical data' if none)\",\n      \"opportunity_strength\": 0.0,\n      \"opportunity_strength_breakdown\": {\n        \"base_score\": 0.50,\n        \"factors\": [\n          {\"factor\": \"factor_name\", \"impact\": \"+0.10|-0.10\", \"evidence\": \"JSON path or quote\"}\n        ],\n        \"calculated_total\": 0.0\n      },\n      \"confidence_factors\": {\n        \"relationship_clarity\": 0.0,\n        \"channel_certainty\": 0.0,\n        \"content_quality\": 0.0,\n        \"timing_accuracy\": 0.0,\n        \"historical_pattern_match\": 0.0\n      }\n    },\n    \"risk_factors\": [\n      {\"risk\": \"...\", \"severity\": \"low|medium|high\", \"mitigation\": \"...\"}\n    ],\n    \"success_criteria\": {\n      \"immediate\": \"...\",\n      \"short_term\": \"...\",\n      \"medium_term\": \"...\"\n    }\n  },\n  \"conditional_context\": {\n    \"pilot_health\": null,\n    \"stakeholder_map\": null,\n    \"explicit_timing_agreement\": null,\n    \"buying_committee\": null,\n    \"known_objections\": null,\n    \"deal_contact_status\": null,\n    \"competitive_context\": null,\n    \"buying_process\": null\n  },\n  \"metadata\": {\n    \"synthesis_confidence\": 0.0,\n    \"agents_consulted\": {\n      \"wave_1\": [\"context_analyzer\", \"opportunity_detector\", \"state_analyzer\", \"timing_strategist\"],\n      \"wave_2\": [\"channel_selector\", \"content_generator\", \"sequence_strategist\"]\n    },\n    \"iterations_total\": 0,\n    \"validation_passed\": {\n      \"execute_at_populated\": true,\n      \"wait_type_if_wait\": true,\n      \"opportunity_breakdown_matches\": true,\n      \"sequence_plan_if_long_cycle\": true,\n      \"conditional_structures_applied\": true\n    },\n    \"processing_notes\": \"...\"\n  }\n}\n\n## CONDITIONAL CONTEXT RULES\nInclude these ONLY when triggers are met (otherwise set to null):\n- pilot_health: When deal contains \"pilot|poc|trial\" in name or stage\n- stakeholder_map: When >2 distinct people mentioned in activities\n- explicit_timing_agreement: When contact/owner mentioned specific recontact date\n- buying_committee: When champion ≠ decision maker or approval needed\n- known_objections: When objection explicitly mentioned in data\n- deal_contact_status: When deal is closed but contact has value\n- competitive_context: When competition mentioned\n- buying_process: When cycle >3 months with identifiable stages\n\n⚠️ CRITICAL OUTPUT FORMAT:\nYour response must be PURE JSON only.\n- NO markdown code blocks (no ```)\n- NO text before or after the JSON\n- Start with { and end with }\n- execute_at MUST be ISO8601 datetime if ANY timing exists in reasoning\n- opportunity_strength MUST equal opportunity_strength_breakdown.calculated_total",
+        "options": {
+          "systemMessage": "=# Orchestrator Synthesis: Final Decision Maker\n\n**ROLE**: Strategic Synthesizer & Final Authority\n\nYou receive results from 7 specialized agents across 2 waves and must produce ONE final actionable recommendation.\n\n====================\n⚠️ PROACTIVE ACTION PHILOSOPHY (READ FIRST)\n====================\n\n**YOUR DEFAULT IS ACTION, NOT WAITING.**\n\nWhen agents provide content and a valid channel, your job is to ENABLE that outreach, not find reasons to block it.\n\n### MINDSET:\n- OLD: \"Is there enough justification to reach out?\"\n- NEW: \"Given we have content, how do we make this outreach happen?\"\n\n### BIAS TOWARD SENDING:\n| Scenario | Decision |\n|----------|----------|\n| Content Generator produced message | → action=\"send_message\" |\n| Weak hook but relationship exists | → action=\"send_message\" with friendly check-in |\n| 30+ days silence, any history | → action=\"send_message\" |\n| 3-4 outbounds without response | → action=\"send_message\" (lighter touch) |\n| Contact liked/viewed content | → action=\"send_message\" IMMEDIATELY |\n| Meeting scheduled | → action=\"wait\" (only exception) |\n| Contact explicitly said wait | → action=\"wait\" (respect explicit request) |\n| 5+ outbounds, zero response | → action=\"break_up\" or \"no_action\" |\n\n### WHEN TO USE \"wait\":\nONLY use action=\"wait\" when:\n1. Meeting is already scheduled (confirmed date exists)\n2. Contact EXPLICITLY said \"contact me in [date]\"\n3. We just sent a message < 3 days ago AND no engagement signal since\n\n**NEVER use \"wait\" just because:**\n- Hook is old (acknowledge time and reach out)\n- Score is low (friendly check-in is valid)\n- No strong opportunity (coffee invite is always valid)\n\n### WHEN TO USE \"no_action\":\nONLY use action=\"no_action\" when:\n1. 5+ consecutive outbounds with ZERO response\n2. Contact explicitly opted out (\"stop contacting me\")\n3. Contact left the company\n\n---\n\n## INPUT STRUCTURE\n\n### Wave 1 Results (from Distribution Orchestrator)\nContains analysis from 4 agents called as tools. Look for their outputs in the tool call results:\n\n- **Context Analyzer**: relationship_stage, depth_score, trajectory, confidence\n- **Opportunity Detector**: opportunities[], strength_score, confidence  \n- **State Analyzer**: global_state, action_requirement, who_has_ball, confidence\n- **Timing Strategist**: optimal_send_window, timing_rationale, confidence\n\n### Wave 2 Results (from Evaluation Orchestrator)\nContains action recommendations in `wave2_results`:\n```json\n{\n  \"wave2_results\": {\n    \"channel_selector\": {\n      \"extracted\": {\n        \"recommended_channel\": \"...\",\n        \"fallback_channel\": \"...\",\n        \"confidence\": 0.0\n      }\n    },\n    \"content_generator\": {\n      \"extracted\": {\n        \"generated_content\": {\n          \"linkedin\": { \"message\": \"...\", \"tone\": \"...\" },\n          \"email\": { \"subject\": \"...\", \"body\": \"...\", \"tone\": \"...\" }\n        },\n        \"confidence\": 0.0\n      }\n    },\n    \"sequence_strategist\": {\n      \"extracted\": {\n        \"is_sequence\": true|false,\n        \"recommended_sequence\": [],\n        \"confidence\": 0.0\n      }\n    }\n  },\n  \"quality_assessment\": {\n    \"historical_alignment\": 0.0\n  },\n  \"historical_context\": {\n    \"examples_reviewed\": 0,\n    \"has_historical_data\": true|false,\n    \"pattern_match_assessment\": \"...\",\n    \"channel_alignment\": \"...\",\n    \"tone_alignment\": \"...\"\n  }\n}\n```\n\n### Historical Validation (Pre-processed by Evaluation)\nThe Evaluation Orchestrator has already compared results against historical validated examples. Use `historical_context` from Wave 2 results to:\n- Understand how well current recommendations align with past successes\n- Incorporate historical_alignment score into your confidence factors\n- Reference pattern_match_assessment in your rationale\n\n---\n\n## SYNTHESIS PROCESS\n\n### Step 1: Extract Key Insights\n\nFrom Wave 1:\n- Relationship stage and trajectory (Context Analyzer)\n- Best opportunities to leverage (Opportunity Detector)\n- Who should act and urgency level (State Analyzer)\n- Optimal timing window (Timing Strategist)\n\nFrom Wave 2:\n- Recommended channel + fallback (Channel Selector)\n- Generated messages for each channel (Content Generator)\n- Sequence plan if applicable (Sequence Strategist)\n- Historical alignment assessment (quality_assessment + historical_context)\n\n### Step 2: Validate Alignment\n\nCheck for consistency:\n- Does channel selection align with state analysis?\n- Does content leverage the identified opportunities?\n- Is the sequence appropriate for relationship stage?\n- Does timing match behavioral patterns?\n- Did Evaluation confirm historical pattern alignment?\n\n### Step 3: Select Best Options\n\n**Channel Selection**:\n1. Use Channel Selector recommendation\n2. Verify channel is available in contact_info\n3. If unavailable, use fallback_channel\n4. Consider historical_context.channel_alignment\n5. Document reasoning\n\n**Content Selection**:\n1. Get message from Content Generator for selected channel\n2. Verify it references opportunities from Wave 1\n3. Ensure tone matches relationship stage\n4. Consider historical_context.tone_alignment\n5. Use EXACTLY as generated (dont rewrite)\n\n**Timing Selection**:\n1. Use Timing Strategist optimal window\n2. Convert to ISO8601 with correct timezone\n3. If \"immediate\", use today date within the time window\n\n**Sequence Selection**:\n1. Use Sequence Strategist recommendation\n2. Include full sequence_plan with dates\n3. Mark step 1 as \"ready_to_execute\"\n\n### Step 4: Build Final Decision\n\nCombine everything into the output structure with:\n- Clear action and channel\n- EXACT content from Content Generator\n- Specific execution datetime\n- Complete sequence plan\n- Detailed rationale for each decision\n- Historical alignment summary from Evaluation\n- Risk factors and success criteria\n\n---\n\n## CRITICAL RULES\n\n1. **USE WAVE 2 CONTENT**: The message in `selected_content.message` MUST come from `wave2_results.content_generator.extracted.generated_content[selected_channel]`. Do NOT invent new messages.\n\n2. **VALIDATE CHANNEL AVAILABILITY**: Check that selected_channel exists in contact_info (linkedin_url, email, whatsapp_number, phone).\n\n3. **PRESERVE CONFIDENCE SCORES**: Copy confidence values from each agent into `confidence_factors`.\n\n4. **USE HISTORICAL CONTEXT**: Reference `historical_context` from Evaluation in your `historical_alignment` rationale and `historical_pattern_match` confidence factor.\n\n5. **COMPLETE SEQUENCE PLAN**: If is_sequence=true, include ALL steps with specific ISO8601 dates.\n\n6. **VALID JSON ONLY**: No markdown backticks, no extra text, just the JSON object.\n\n---\n\n## EXAMPLE MAPPING\n\nIf Wave 2 contains:\n```json\n\"channel_selector\": {\n  \"extracted\": { \"recommended_channel\": \"linkedin\", \"confidence\": 0.83 }\n}\n\"content_generator\": {\n  \"extracted\": {\n    \"generated_content\": {\n      \"linkedin\": { \n        \"message\": \"Bonjour Franck, suite à notre échange...\", \n        \"tone\": \"professional-friendly\" \n      }\n    }\n  }\n}\n\"historical_context\": {\n  \"has_historical_data\": true,\n  \"pattern_match_assessment\": \"Channel and tone align well with 3 similar CIO contacts\",\n  \"channel_alignment\": \"LinkedIn matches 80% of historical successes for CIO roles\"\n}\n```\n\nThen your output MUST have:\n```json\n\"selected_channel\": \"linkedin\",\n\"selected_content\": {\n  \"message\": \"Bonjour Franck, suite à notre échange...\",\n  \"tone\": \"professional-friendly\",\n  \"content_source\": \"wave2_content_generator\"\n}\n\"rationale\": {\n  \"historical_alignment\": \"Channel and tone align well with historical CIO patterns (80% linkedin success rate)\"\n}\n\"confidence_factors\": {\n  \"channel_certainty\": 0.83,\n  \"historical_pattern_match\": 0.8\n}\n\"metadata\": {\n  \"historical_validation_performed\": true\n}\n```\n\n====================\nOUTPUT COHERENCE RULES (MANDATORY)\n====================\n\nBefore finalizing output, validate:\n\n1) ACTION vs EXECUTE_AT COHERENCE:\n   - If action = \"wait\" AND message is empty → execute_at should be null\n   - Use \"re_evaluate_at\" for future review dates without sending\n   - If action = \"send_message\" → message MUST NOT be empty\n\n2) CONTENT_QUALITY VALIDATION:\n   - If message is empty → content_quality = null (not a number)\n   - If message exists → content_quality must reflect actual quality\n\n3) GHOSTING HANDLING (RELAXED):\n   - 0-2 consecutive outbounds: Normal action OK\n   - 3-4 consecutive outbounds: Lighter touch (check-in, coffee, channel switch) - NOT no_action!\n   - 5+ consecutive outbounds: action = \"break_up\" or \"no_action\"\n   - Exception: Engagement signal resets counter (like, comment, profile visit)\n\n4) ACTION TYPE CLARITY:\n   - \"send_message\": Execute immediately or at execute_at\n   - \"wait\": Re-evaluate later (use re_evaluate_at, not execute_at)\n   - \"no_action\": Do nothing, flag for manual review if needed\n   - \"break_up\": Send final respectful message\n\n---\n\n## OUTPUT CHECKLIST\n\nBefore responding, verify:\n- [ ] selected_channel matches Channel Selector recommendation (or valid fallback)\n- [ ] selected_content.message is EXACTLY from Content Generator (not invented)\n- [ ] execute_at is valid ISO8601 with timezone (NEVER \"Not specified\" if timing exists in reasoning)\n- [ ] sequence_plan has specific dates (not relative times)\n- [ ] All confidence_factors are populated from agent outputs\n- [ ] historical_alignment references Evaluation historical_context\n- [ ] historical_pattern_match reflects Evaluation quality_assessment.historical_alignment\n- [ ] risk_factors identifies at least 1-2 potential issues\n- [ ] JSON is valid (no trailing commas, proper quotes)\n- [ ] opportunity_strength has breakdown with calculated_total matching\n- [ ] wait_type is populated if action=\"wait\"\n- [ ] sequence_plan is NOT empty for cycles >30 days or nurturing scenarios\n\n====================\nPRIORITY 1: CRITICAL OUTPUT RULES (MANDATORY)\n====================\n\n### 1. execute_at MUST BE POPULATED\n\n**RULE**: If timing_reasoning contains ANY temporal reference, execute_at MUST have an ISO datetime.\n\n| Scenario | execute_at Behavior |\n|----------|---------------------|\n| action=\"send_message\" | Datetime to send the message |\n| action=\"wait\" | Use as \"reevaluate_at\" - when to re-check |\n| action=\"no_action\" | Null is acceptable |\n| action=\"break_up\" | Datetime to send break-up |\n\n**DETECTION**: Scan timing_reasoning for:\n- Dates: \"janvier\", \"février\", \"Q1\", \"début d'année\"\n- Relative: \"après le meeting\", \"dans 2 semaines\", \"la semaine prochaine\"\n- Events: \"post-meeting\", \"après leur décision\"\n\n**FORBIDDEN**: `\"execute_at\": \"Not specified\"` when ANY temporal reference exists.\n\n**CONVERSION RULES**:\n- \"début janvier\" → 2026-01-06T09:00:00+01:00\n- \"mi-janvier\" → 2026-01-15T09:00:00+01:00\n- \"fin janvier\" → 2026-01-27T09:00:00+01:00\n- \"après le meeting du X\" → X + 1 day, 09:00\n- \"dans 2 semaines\" → today + 14 days, 09:00\n\n---\n\n### 2. wait_type IS MANDATORY FOR action=\"wait\"\n\nWhen action=\"wait\", you MUST include:\n\n```json\n\"wait_type\": {\n  \"type\": \"prospect_timing|prospect_validation|meeting_scheduled|pilot_review|explicit_request|long_cycle|ghosting\",\n  \"risk_level\": \"low|medium|high|critical\",\n  \"trigger_event\": \"What caused the wait decision\",\n  \"reevaluation_trigger\": \"What should trigger re-evaluation\"\n}\n```\n\n**RISK_LEVEL RULES**:\n- **critical**: POC/Pilot ending + churn signals, deal at risk\n- **high**: Meeting cancelled, known objection, ghosting >30 days\n- **medium**: Pause requested, evaluating competition, budget cycle\n- **low**: Meeting scheduled, explicit timing respected\n\n**TYPE DEFINITIONS**:\n| Type | When to Use |\n|------|-------------|\n| prospect_timing | Contact gave explicit future date |\n| prospect_validation | Waiting for internal validation/approval |\n| meeting_scheduled | Meeting confirmed, no outreach needed |\n| pilot_review | In pilot/POC phase, reviewing progress |\n| explicit_request | Contact asked us to wait |\n| long_cycle | Enterprise sale >3 months, strategic patience |\n| ghosting | No response, waiting before break-up |\n\n---\n\n### 3. sequence_plan MUST BE POPULATED\n\n**sequence_plan is MANDATORY when**:\n- Sale cycle > 30 days\n- action=\"wait\" with known return date\n- Any nurturing scenario (deal_classification=\"DEAL_NURTURING\")\n- Re-engagement requiring multi-touch\n- Ghosting requiring break-up sequence\n\n**MINIMUM FORMAT**:\n```json\n\"sequence_plan\": [\n  {\n    \"step\": 1,\n    \"trigger\": \"reevaluation_date|no_response|event|manual\",\n    \"channel\": \"email|linkedin|phone|whatsapp\",\n    \"action_type\": \"check_in|follow_up|value_share|break_up\",\n    \"planned_date\": \"2026-01-15T09:00:00+01:00\",\n    \"status\": \"ready_to_execute|pending|conditional\"\n  }\n]\n```\n\n**FOR action=\"wait\"**:\n```json\n\"sequence_plan\": [\n  {\n    \"step\": 1,\n    \"trigger\": \"reevaluation_date\",\n    \"channel\": \"linkedin\",\n    \"action_type\": \"check_in\",\n    \"planned_date\": \"2026-01-06T09:00:00+01:00\",\n    \"status\": \"pending\",\n    \"condition\": \"Re-evaluate contact status after holidays\"\n  }\n]\n```\n\n---\n\n### 4. opportunity_strength MUST HAVE BREAKDOWN\n\n**RULE**: NEVER output opportunity_strength without opportunity_strength_breakdown.\n\n**FORMAT**:\n```json\n\"opportunity_strength\": 0.55,\n\"opportunity_strength_breakdown\": {\n  \"base_score\": 0.50,\n  \"factors\": [\n    {\"factor\": \"inbound_lead\", \"impact\": \"+0.15\", \"evidence\": \"prospect initiated contact via LinkedIn\"},\n    {\"factor\": \"demo_completed\", \"impact\": \"+0.10\", \"evidence\": \"positive feedback during demo 2025-09-11\"},\n    {\"factor\": \"emails_ignored\", \"impact\": \"-0.15\", \"evidence\": \"3 emails without response since demo\"},\n    {\"factor\": \"budget_constraint\", \"impact\": \"-0.05\", \"evidence\": \"mentioned budget review in Q1\"}\n  ],\n  \"calculated_total\": 0.55\n}\n```\n\n**VALIDATION**: `opportunity_strength` MUST equal `calculated_total`.\n\n### ⚠️ MINIMUM SCORE FLOOR RULES (CRITICAL):\n\n**opportunity_strength = 0 is INVALID when ANY of these exist:**\n\n| Condition | Minimum Score |\n|-----------|---------------|\n| Meeting held in last 30 days | min 0.50 |\n| Active deal with pricing discussed | min 0.60 |\n| Demo completed + positive feedback | min 0.65 |\n| Meeting + pricing + next steps defined | min 0.75 |\n\n**BEFORE OUTPUTTING, CHECK:**\n- If recent meeting exists AND opportunity_strength < 0.50 → RECALCULATE\n- If pricing discussed AND opportunity_strength < 0.60 → RECALCULATE\n- If opportunity_strength = 0 AND contact has any history → INVALID\n\n**FACTOR CATEGORIES** (UPDATED):\n| Category | Positive Impact | Negative Impact |\n|----------|-----------------|-----------------|\n| Recent meeting held | +0.25 to +0.40 | - |\n| Demo/pricing discussed | +0.20 to +0.30 | - |\n| Interest signals | +0.10 to +0.20 | - |\n| Response behavior | +0.05 to +0.15 | -0.10 to -0.15 |\n| Timeline alignment | +0.05 to +0.10 | -0.05 to -0.10 |\n| Budget signals | +0.05 to +0.10 | -0.10 to -0.15 |\n| Competitive situation | +0.05 | -0.10 to -0.15 |\n\n**EXAMPLE BUG TO AVOID:**\n❌ Contact had 33-min meeting, pricing ~14,400€ discussed, next steps defined → opportunity_strength: 0\n✅ Same contact → opportunity_strength: 0.85 (meeting +0.35, pricing +0.25, recency +0.25)\n\n====================\nPRIORITY 2: CONDITIONAL STRUCTURES (BY ACCOUNT TYPE)\n====================\n\n### 5. pilot_health (For POC/Pilot Accounts)\n\n**TRIGGER**: Deal in pilot/POC/trial stage OR deal_name contains \"pilot|poc|trial|test\"\n\n```json\n\"pilot_health\": {\n  \"pilot_status\": \"active|ending_soon|ended|at_risk\",\n  \"pilot_end_date\": \"2026-01-15\",\n  \"days_until_end\": 30,\n  \"churn_signals\": [\n    {\"signal\": \"meeting_cancellations\", \"count\": 2, \"severity\": \"medium\"},\n    {\"signal\": \"champion_unresponsive\", \"days\": 14, \"severity\": \"high\"},\n    {\"signal\": \"internal_reevaluation_mentioned\", \"severity\": \"high\"}\n  ],\n  \"conversion_probability\": 0.60,\n  \"recommended_retention_actions\": [\n    \"Schedule executive check-in\",\n    \"Share ROI calculation\",\n    \"Propose pilot extension\"\n  ]\n}\n```\n\n**CHURN SIGNAL SEVERITY**:\n- high: Champion unresponsive 14+ days, competitor mentioned, budget cut\n- medium: Meeting rescheduled 2+x, delayed decisions, reduced scope\n- low: Normal business delays, vacation periods\n\n---\n\n### 6. stakeholder_map (For Enterprise Accounts)\n\n**TRIGGER**: >2 distinct stakeholders mentioned in activities\n\n```json\n\"stakeholder_map\": {\n  \"champion\": {\n    \"name\": \"André Mooser\",\n    \"role\": \"PMO Director\",\n    \"engagement_level\": \"high|medium|low\",\n    \"last_contact\": \"2025-12-10\"\n  },\n  \"decision_maker\": {\n    \"name\": \"unknown\",\n    \"role\": \"CTO (inferred)\",\n    \"status\": \"engaged|not_engaged|unknown\"\n  },\n  \"other_stakeholders\": [\n    {\"name\": \"Emeline\", \"role\": \"DSI des métiers\", \"relationship_to_deal\": \"Technical evaluator\"}\n  ],\n  \"multi_threading_opportunity\": {\n    \"exists\": true,\n    \"recommendation\": \"Engage Emeline directly on technical aspects\"\n  }\n}\n```\n\n---\n\n### 7. explicit_timing_agreement (When Timing Was Agreed)\n\n**TRIGGER**: Contact OR owner mentioned specific recontact date in activities\n\n```json\n\"explicit_timing_agreement\": {\n  \"exists\": true,\n  \"type\": \"mutual|unilateral_prospect|unilateral_owner\",\n  \"agreed_date_verbatim\": \"début janvier 2026\",\n  \"agreed_date_iso\": \"2026-01-06T09:00:00+01:00\",\n  \"source\": \"linkedin_message\",\n  \"source_date\": \"2025-11-04\",\n  \"prospect_verbatim\": \"Je reprendrai le sujet début de l'année prochaine\",\n  \"our_commitment\": \"On se recontacte tranquillement début janvier\",\n  \"compliance_status\": \"respecting|approaching|at_risk_of_breach\"\n}\n```\n\n**COMPLIANCE_STATUS**:\n- respecting: Current date < agreed_date - 7 days\n- approaching: Current date within 7 days of agreed_date\n- at_risk_of_breach: Current date > agreed_date (we should have reached out)\n\n---\n\n### 8. buying_committee (For B2B Complex Sales)\n\n**TRIGGER**: Champion ≠ decision maker OR approval process mentioned\n\n```json\n\"buying_committee\": {\n  \"champion\": {\n    \"name\": \"Marie-Anne Castro\",\n    \"role\": \"CTO\",\n    \"budget_authority\": false,\n    \"influence_level\": \"high\"\n  },\n  \"required_approvers\": [\n    {\n      \"role\": \"DAF\",\n      \"name\": \"unidentified\",\n      \"status\": \"not_engaged\",\n      \"importance\": \"critical\"\n    },\n    {\n      \"role\": \"COMEX\",\n      \"name\": \"unidentified\",\n      \"status\": \"unknown\",\n      \"importance\": \"high\"\n    }\n  ],\n  \"approval_process\": \"budget_validation|comex_approval|multiple_signatures\",\n  \"next_action_to_advance\": \"Request intro to DAF for budget discussion\"\n}\n```\n\n====================\nPRIORITY 3: SALES INTELLIGENCE STRUCTURES\n====================\n\n### 9. known_objections (When Objections Detected)\n\n**TRIGGER**: Objection mentioned in notes, emails, or via third party\n\n```json\n\"known_objections\": [\n  {\n    \"type\": \"value_perception|budget|timing|authority|need|competition\",\n    \"source\": \"direct|via_third_party\",\n    \"source_detail\": \"Mentioned by Alexis in email 2025-09-05\",\n    \"verbatim\": \"Je ne suis pas sûre de la valeur ajoutée par rapport à notre Excel actuel\",\n    \"date_identified\": \"2025-09-05\",\n    \"status\": \"unaddressed|addressed|resolved|permanent_blocker\",\n    \"impact_on_strategy\": \"Message must demonstrate ROI vs Excel, not features\"\n  }\n]\n```\n\n**CRITICAL**: If known_objections exists, selected_content MUST address it.\n\n---\n\n### 10. deal_contact_separation (For Closed Deals)\n\n**TRIGGER**: Deal closed (won or lost) but contact has ongoing value\n\n```json\n\"deal_contact_status\": {\n  \"deal\": {\n    \"status\": \"open|closed_won|closed_lost|paused\",\n    \"closed_date\": \"2025-09-10\",\n    \"days_since_close\": 98,\n    \"lost_reason\": null\n  },\n  \"contact\": {\n    \"ongoing_value\": \"none|referral_potential|future_opportunity|active_in_other_deal\",\n    \"contact_type\": \"end_user|champion|consultant_referrer|executive_sponsor\",\n    \"nurturing_appropriate\": true,\n    \"relationship_quality\": \"positive|neutral|negative\"\n  }\n}\n```\n\n---\n\n### 11. competitive_context (When Competition Mentioned)\n\n**TRIGGER**: Contact mentioned evaluating alternatives or doing benchmark\n\n```json\n\"competitive_context\": {\n  \"status\": \"sole_vendor|actively_evaluating|competitor_preferred|unknown\",\n  \"competitors_mentioned\": [\"Monday.com\", \"Asana\"],\n  \"evaluation_timeline\": \"Q1 2026\",\n  \"our_positioning\": \"leader|contender|underdog|unknown\",\n  \"differentiation_leveraged\": [\"quarter_plan\", \"capacity_management\"],\n  \"risk_level\": \"low|medium|high\",\n  \"competitive_response_needed\": {\n    \"required\": true,\n    \"recommendation\": \"Emphasize Quarter Plan unique methodology\"\n  }\n}\n```\n\n---\n\n### 12. buying_process (For Long Sales Cycles)\n\n**TRIGGER**: Cycle >3 months with identifiable stages\n\n```json\n\"buying_process\": {\n  \"total_cycle_months\": 4,\n  \"current_stage\": \"budget_validation\",\n  \"stages\": [\n    {\n      \"stage_name\": \"expression_de_besoin\",\n      \"status\": \"completed\",\n      \"completed_date\": \"2025-09-01\"\n    },\n    {\n      \"stage_name\": \"evaluation_technique\",\n      \"status\": \"completed\",\n      \"completed_date\": \"2025-10-15\"\n    },\n    {\n      \"stage_name\": \"budget_validation\",\n      \"status\": \"in_progress\",\n      \"owner\": \"DAF\",\n      \"expected_date\": \"2026-01-15\",\n      \"blocker\": false\n    },\n    {\n      \"stage_name\": \"decision_finale\",\n      \"status\": \"pending\",\n      \"expected_date\": \"2026-02-01\"\n    }\n  ],\n  \"next_milestone\": \"Budget validation by DAF\",\n  \"our_role_in_next_stage\": \"Provide ROI documentation for budget justification\"\n}\n```\n\n====================\nOUTPUT VALIDATION RULES (FINAL CHECK)\n====================\n\n### OUTPUT IS INVALID IF:\n\n1. ❌ `action=\"wait\"` AND `execute_at=\"Not specified\"` AND timing exists in reasoning\n2. ❌ `action=\"wait\"` AND `wait_type` is absent\n3. ❌ `opportunity_strength` present without `opportunity_strength_breakdown`\n4. ❌ Sale cycle >30 days AND `sequence_plan` is empty\n5. ❌ Objection in input data AND not reflected in `known_objections`\n6. ❌ POC/Pilot deal AND `pilot_health` is absent\n7. ❌ Explicit timing in data AND `explicit_timing_agreement` is absent\n8. ❌ `opportunity_strength` ≠ `opportunity_strength_breakdown.calculated_total`\n9. ❌ `opportunity_strength = 0` AND recent meeting exists (last 30 days)\n10. ❌ `opportunity_strength < 0.50` AND pricing was discussed\n11. ❌ `opportunity_strength < 0.60` AND demo completed with positive feedback\n\n### OUTPUT IS VALID IF:\n\n- ✅ `execute_at` has ISO datetime (or null only for action=\"no_action\")\n- ✅ `wait_type` populated for all wait decisions\n- ✅ `opportunity_strength_breakdown` always present with matching total\n- ✅ `sequence_plan` populated for cycles >30 days\n- ✅ Conditional structures present when triggers match\n- ✅ All confidence_factors populated\n- ✅ risk_factors has at least 1 entry\n- ✅ success_criteria has all three levels filled\n\n---\n\n## LANGUAGE\n\n- If contact communication history is in French, write rationale in French\n- If in English, write in English\n- Message content should match the language used by Content Generator\n\n====================\n🚨 ANTI-HALLUCINATION PROTOCOL (MANDATORY)\n====================\n\nRULE #1: SOURCE OF TRUTH = THIS JSON ONLY\nYou must NEVER affirm a fact that is not present or directly deducible from the JSON provided.\n\n| ALLOWED | FORBIDDEN |\n|---------|-----------|\n| Quote a value present in JSON | Invent a value not present |\n| Deduce a fact from JSON data (e.g., calculated delay) | Assume unverifiable info |\n| Write \"NOT_FOUND\" or \"UNKNOWN\" if field is absent | Fill a field with invented value |\n| Summarize content from metadata.body | Interpret intent beyond the text |\n\nRULE #2: EVIDENCE TRAIL (MANDATORY)\nFor EVERY claim you make, you MUST be able to point to the exact JSON path.\n\nExample of GOOD evidence:\n\\`\\`\\`\nClaim: \"Last OUTBOUND was on 2025-08-27\"\nEvidence: activities[0].recorded_on = \"2025-08-27T12:02:43+00:00\"\n          activities[0].direction = \"OUTBOUND\" ✓\n\\`\\`\\`\n\nExample of BAD (hallucination):\n\\`\\`\\`\nClaim: \"Contact showed interest in pricing\"\nEvidence: ??? (not explicitly stated in any INBOUND message)\n→ THIS IS HALLUCINATION - FORBIDDEN\n\\`\\`\\`\n\nRULE #3: WHEN IN DOUBT, LEAVE IT OUT\nIf you cannot point to a specific JSON field for a claim → DO NOT MAKE THE CLAIM."
+        }
       },
-      "Get historial recomendations": {
-        "main": [
-          [
-            {
-              "node": "Merge2",
-              "type": "main",
-              "index": 1
-            }
-          ]
-        ]
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1904,
+        48
+      ],
+      "id": "f8956e24-e9ea-482b-93c7-9a155f191362",
+      "name": "Orchestrator Synthesis",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-sonnet-4-20250514",
+          "mode": "list",
+          "cachedResultName": "Claude Sonnet 4"
+        },
+        "options": {
+          "maxTokensToSample": 10000,
+          "temperature": 0.2
+        }
       },
-      "Merge2": {
-        "main": [
-          [
-            {
-              "node": "Orchestrator Evaluation",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Opus 4.5 Model2": {
-        "ai_languageModel": [
-          [
-            {
-              "node": "Orchestrator Evaluation",
-              "type": "ai_languageModel",
-              "index": 0
-            }
-          ]
-        ]
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        496,
+        192
+      ],
+      "id": "7c153553-5dd5-47cc-9e53-a45bfbd4995f",
+      "name": "Sonnet 4 Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "WR9IYE0cy2Srym3w",
+          "name": "Anthropic account"
+        }
       }
     },
-    "pinData": {},
-    "meta": {
-      "templateCredsSetupCompleted": true,
-      "instanceId": "68281001cf81541d7dbe4d9b4209e0b29467134afcd3e5ae5b83989067eba263"
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-opus-4-5-20251101",
+          "mode": "list",
+          "cachedResultName": "Claude Opus 4.5"
+        },
+        "options": {
+          "maxTokensToSample": 10000,
+          "temperature": 0.6
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1904,
+        224
+      ],
+      "id": "4fc8a0a6-a901-4e20-8a8e-5a19da203d3f",
+      "name": "Opus Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "WR9IYE0cy2Srym3w",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obtener el output raw del agente\nconst rawOutput = $input.first().json.output;\n\n// Limpiar los backticks de markdown si existen\nlet cleanJson = rawOutput;\nif (typeof rawOutput === 'string') {\n  cleanJson = rawOutput\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n}\n\n// Parsear el JSON\nlet input;\ntry {\n  input = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  const jsonMatch = cleanJson.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    input = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Could not parse Synthesis output: ' + e.message);\n  }\n}\n\nconst decision = input.final_decision;\n\nif (!decision) {\n  throw new Error('Missing final_decision in Synthesis output');\n}\n\n// Obtener datos del owner y contacto\nlet ownerName = '';\nlet contactLinkedinUrl = '';\n\n// Intentar desde Webhook\ntry {\n  const webhookData = $('Webhook').first().json;\n  \n  // LinkedIn del CONTACTO (de contact_info)\n  contactLinkedinUrl = webhookData.body?.contact_info?.linkedin_url || '';\n  \n  // Nombre del OWNER (de la primera activity)\n  const activities = webhookData.body?.activities || [];\n  for (const activity of activities) {\n    if (activity.owner && activity.owner.owner_name) {\n      ownerName = activity.owner.owner_name;\n      break;\n    }\n  }\n} catch (e) {\n  // Si falla Webhook, intentar desde Merge\n  try {\n    const mergeData = $('Merge').first().json;\n    \n    contactLinkedinUrl = mergeData.contact_info?.linkedin_url || '';\n    \n    const activities = mergeData.activities || [];\n    for (const activity of activities) {\n      if (activity.owner && activity.owner.owner_name) {\n        ownerName = activity.owner.owner_name;\n        break;\n      }\n    }\n  } catch (e2) {\n    console.log('Could not extract data from any source');\n  }\n}\n\nreturn {\n  json: {\n    decision: {\n      // Identificación\n      orchestrator_id: input.orchestrator_id || 'Not specified',\n      phase: input.phase || 'Not specified',\n      contact_fullname: decision.contact_fullname || '',\n      \n      // Owner y Contact info\n      owner_name: ownerName || 'Not specified',\n      contact_linkedin_url: contactLinkedinUrl || 'Not specified',\n      \n      // Acción principal\n      action: decision.action || 'Not specified',\n      selected_channel: decision.selected_channel || 'Not specified',\n      \n      // Contenido seleccionado\n      message: decision.selected_content?.message || 'No recommended message.',\n      subject: decision.selected_content?.subject  || '',\n      tone: decision.selected_content?.tone || '',\n      content_source: decision.selected_content?.content_source || '',\n      \n      // Timing de ejecución\n      execute_at: decision.execution_timing?.execute_at || 'Not specified',\n      timezone: decision.execution_timing?.timezone || 'Not specified',\n      timing_rationale: decision.execution_timing?.timing_rationale || 'Not specified',\n      \n      // Secuencia\n      is_part_of_sequence: decision.sequence_instructions?.is_part_of_sequence || false,\n      current_step: decision.sequence_instructions?.current_step || 1,\n      total_steps: decision.sequence_instructions?.total_steps || 1,\n      sequence_plan: decision.sequence_instructions?.sequence_plan || [],\n      \n      // Rationale\n      overall_strategy: decision.rationale?.overall_strategy || '',\n      channel_reasoning: decision.rationale?.channel_reasoning || '',\n      content_reasoning: decision.rationale?.content_reasoning || '',\n      timing_reasoning: decision.rationale?.timing_reasoning || '',\n      sequence_reasoning: decision.rationale?.sequence_reasoning || '',\n      \n      // Confidence factors\n      relationship_clarity: decision.rationale?.confidence_factors?.relationship_clarity || 0,\n      opportunity_strength: decision.rationale?.confidence_factors?.opportunity_strength || 0,\n      channel_certainty: decision.rationale?.confidence_factors?.channel_certainty || 0,\n      content_quality: decision.rationale?.confidence_factors?.content_quality || 0,\n      timing_accuracy: decision.rationale?.confidence_factors?.timing_accuracy || 0,\n      \n      // Riesgos y criterios\n      risk_factors: decision.risk_factors || [],\n      success_criteria_immediate: decision.success_criteria?.immediate || '',\n      success_criteria_short_term: decision.success_criteria?.short_term || '',\n      success_criteria_medium_term: decision.success_criteria?.medium_term || '',\n      \n      // Metadata\n      synthesis_confidence: input.metadata?.synthesis_confidence || 0,\n      agents_wave_1: input.metadata?.agents_consulted?.wave_1 || [],\n      agents_wave_2: input.metadata?.agents_consulted?.wave_2 || [],\n      iterations_total: input.metadata?.iterations_total || 0,\n      processing_notes: input.metadata?.processing_notes || ''\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        48
+      ],
+      "id": "26131a77-d569-4528-b24b-af2d06e0566e",
+      "name": "Parse JSON"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.decision.action }}",
+                    "rightValue": "retry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "a788d6c5-ff93-4a48-902c-006a5c83018d"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "retry"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "7f05ea6d-271e-4628-8501-2d96b7092df8",
+                    "leftValue": "={{ $json.decision.action }}",
+                    "rightValue": "continue",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "continue"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        1648,
+        32
+      ],
+      "id": "5e12d69c-e0be-4d7a-a8be-1d686a203527",
+      "name": "Retry?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Evaluation Decision - IMPROVED VERSION\nconst evaluationOutput = $input.first().json;\nconst constants = $('Constants').first().json;\n\nlet rawOutput = evaluationOutput.output || evaluationOutput.text || '';\nlet parsedDecision = null;\nlet action = 'continue';\nlet retryInstructions = null;\nlet parseError = null;\n\ntry {\n  if (typeof rawOutput === 'string') {\n    let cleanOutput = rawOutput.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    const jsonMatch = cleanOutput.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsedDecision = JSON.parse(jsonMatch[0]);\n    }\n  } else if (typeof rawOutput === 'object' && rawOutput !== null) {\n    parsedDecision = rawOutput;\n  }\n\n  if (parsedDecision) {\n    const evalAction = parsedDecision.evaluation_decision?.action;\n    if (evalAction === 'retry') {\n      action = 'retry';\n      retryInstructions = parsedDecision.evaluation_decision?.retry_instructions || null;\n    } else {\n      action = 'continue';\n    }\n  }\n} catch (e) {\n  parseError = e.message;\n}\n\nconst currentIteration = constants.iteration_count || 1;\nconst maxIterations = constants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2;\n\nif (currentIteration >= maxIterations) {\n  action = 'continue';\n}\n\nreturn {\n  json: {\n    decision: {\n      action: action,\n      current_iteration: currentIteration,\n      max_iterations: maxIterations,\n      should_retry: action === 'retry' && currentIteration < maxIterations,\n      retry_instructions: retryInstructions\n    },\n    debug: {\n      parse_error: parseError,\n      found_action: parsedDecision?.evaluation_decision?.action || 'NOT_FOUND'\n    },\n    evaluation_output: evaluationOutput,\n    wave1_results: $('Orchestrator Distribution').first().json,\n    parsed_decision: parsedDecision\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        32
+      ],
+      "id": "cfd69364-0cfb-4934-8082-1fe866f191b3",
+      "name": "Parse Evaluation Decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Retry Context\n// Prepara el contexto para re-ejecutar Wave 1 con instrucciones de mejora\n\nconst input = $input.first().json;\n\n// Obtener datos originales - buscar en múltiples fuentes posibles\nlet originalData;\ntry {\n  // Intentar obtener del Input Validator (más confiable)\n  originalData = $('Input Validator').first().json;\n} catch (e) {\n  // Fallback al Merge\n  originalData = $('Merge').first().json;\n}\n\nlet originalConstants;\ntry {\n  originalConstants = $('Constants').first().json;\n} catch (e) {\n  originalConstants = {\n    SEMANTIC_CONSTANTS: { MAX_RETRY_ITERATIONS: 2 },\n    session_id: Date.now(),\n    iteration_count: 1\n  };\n}\n\n// Incrementar contador\nconst newIterationCount = (input.decision.current_iteration || 1) + 1;\n\n// Construir el contexto de retry\nconst retryContext = {\n  // Datos del contacto (desde Input Validator)\n  contact_info: originalData.contact_info,\n  activities: originalData.activities,\n  stats: originalData.stats,\n  validation: originalData.validation,\n  conversation_analysis: originalData.conversation_analysis,\n  _normalized: originalData._normalized,\n  \n  // Constants actualizados\n  SEMANTIC_CONSTANTS: originalConstants.SEMANTIC_CONSTANTS,\n  session_id: originalConstants.session_id,\n  iteration_count: newIterationCount,\n  \n  // Meta de retry - CRÍTICO para que Distribution lo detecte\n  retry_meta: {\n    is_retry: true,\n    iteration: newIterationCount,\n    max_iterations: originalConstants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2,\n    previous_wave1_results: input.wave1_results?.output || {},\n    retry_instructions: input.decision.retry_instructions || {},\n    retry_reason: \"Evaluation Orchestrator requested retry for improved analysis\"\n  }\n};\n\nreturn { json: retryContext };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        -176
+      ],
+      "id": "2534228c-45a0-464a-b7ff-54518f542338",
+      "name": "Prepare Retry Context"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Merge').last().json.session_id }}",
+        "tableName": "n8n_orchestrator_synthesis",
+        "contextWindowLength": 2000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        2000,
+        320
+      ],
+      "id": "91c23484-5e2e-4c0d-b033-0efe10d912a4",
+      "name": "AI_sales_agents Memory",
+      "credentials": {
+        "postgres": {
+          "id": "9t3LCP46SMBNPxAk",
+          "name": "AI_sales_agents Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Merge').last().json.session_id }}",
+        "tableName": "n8n_orchestrator_evaluation",
+        "contextWindowLength": 2000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        1280,
+        304
+      ],
+      "id": "338fc586-8252-460a-a7a2-d4fdf46570f1",
+      "name": "AI_sales_agents Memory1",
+      "credentials": {
+        "postgres": {
+          "id": "9t3LCP46SMBNPxAk",
+          "name": "AI_sales_agents Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Merge').last().json.session_id }}",
+        "tableName": "n8n_orchestrator_distribution",
+        "contextWindowLength": 2000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        592,
+        288
+      ],
+      "id": "3b4a9f41-030b-4509-a88f-c56669a486f5",
+      "name": "AI_sales_agents Memory2",
+      "credentials": {
+        "postgres": {
+          "id": "9t3LCP46SMBNPxAk",
+          "name": "AI_sales_agents Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"message\": \"Workflow was started! This process takes about 7 minutes, please wait...\",\n  \"session_id\": \"{{ $json.session_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        112,
+        160
+      ],
+      "id": "5fe5291a-fbef-4644-bf31-ee5476163c0e",
+      "name": "Respond to Webhook with session_id"
+    },
+    {
+      "parameters": {
+        "tableId": "final_decision",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $('Merge').last().json.session_id }}"
+            },
+            {
+              "fieldId": "decision",
+              "fieldValue": "={{ $json.decision }}"
+            },
+            {
+              "fieldId": "contact_hubspot_id",
+              "fieldValue": "={{ $('Merge').last().json.contact_hubspot_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2416,
+        48
+      ],
+      "id": "7c5f9684-de40-42ee-b88a-2a423d595c07",
+      "name": "Save final decision into table",
+      "retryOnFail": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "7YYll9c7CXOe1KjY",
+          "name": "AI_Sales_supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "n8n_orchestrator_synthesis",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Merge').last().json.session_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "final_decision",
+              "fieldValue": "={{ $json.decision }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2416,
+        -144
+      ],
+      "id": "a3a98a26-b1c1-4653-90ad-6cce96e026ac",
+      "name": "Save final decision reference",
+      "credentials": {
+        "supabaseApi": {
+          "id": "7YYll9c7CXOe1KjY",
+          "name": "AI_Sales_supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.zapier.com/hooks/catch/23843453/ufit1aq/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 0,
+              "batchInterval": 0
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2624,
+        48
+      ],
+      "id": "d581ef05-2fea-423f-b582-e8bac6685c30",
+      "name": "Send to Zapier for Slack"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "final_decision",
+        "limit": 10,
+        "filterType": "string",
+        "filterString": "and=(user_slack_message.not.is.null,user_slack_message.neq.,type_of_validation.not.is.null,type_of_validation.neq.)&order=created_at.desc"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        816,
+        112
+      ],
+      "id": "00252f08-7852-4eac-a500-923ace280c19",
+      "name": "Get historial recomendations",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "7YYll9c7CXOe1KjY",
+          "name": "AI_Sales_supabase"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        976,
+        32
+      ],
+      "id": "613a7cef-5871-46f8-970a-fb8979dec526",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-opus-4-5-20251101",
+          "mode": "list",
+          "cachedResultName": "Claude Opus 4.5"
+        },
+        "options": {
+          "maxTokensToSample": 10000,
+          "temperature": 0.4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1184,
+        208
+      ],
+      "id": "483c92aa-0d8c-489b-a62b-071e0428595c",
+      "name": "Opus 4.5 Model2",
+      "credentials": {
+        "anthropicApi": {
+          "id": "WR9IYE0cy2Srym3w",
+          "name": "Anthropic account"
+        }
+      }
     }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Input Validator",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validator": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Constants": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook with session_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context Analyzer": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opportunity Detector": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Analyzer": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orchestrator Distribution": {
+      "main": [
+        [
+          {
+            "node": "Get historial recomendations",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timing Strategist": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orchestrator Evaluation": {
+      "main": [
+        [
+          {
+            "node": "Parse Evaluation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Selector": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Generator": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sequence Strategist": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orchestrator Synthesis": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sonnet 4 Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opus Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Orchestrator Synthesis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "Save final decision reference",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save final decision into table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Retry Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Orchestrator Synthesis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Evaluation Decision": {
+      "main": [
+        [
+          {
+            "node": "Retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Retry Context": {
+      "main": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI_sales_agents Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Orchestrator Synthesis",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI_sales_agents Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI_sales_agents Memory2": {
+      "ai_memory": [
+        [
+          {
+            "node": "Orchestrator Distribution",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook with session_id": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Save final decision into table": {
+      "main": [
+        [
+          {
+            "node": "Send to Zapier for Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save final decision reference": {
+      "main": [
+        []
+      ]
+    },
+    "Get historial recomendations": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opus 4.5 Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Orchestrator Evaluation",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "68281001cf81541d7dbe4d9b4209e0b29467134afcd3e5ae5b83989067eba263"
   }
+}
