@@ -1,0 +1,42 @@
+This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "relationship_depth_score": 0.0,
+  "relationship_stage": "cold",
+  "trajectory": "stable",
+  "channel_engagement": {
+    "active_channels": [],
+    "channel_diversity_score": 0.0
+  },
+  "key_positive_signals": [
+    {
+      "type": "",
+      "date": "",
+      "description": ""
+    }
+  ],
+  "key_negative_signals": [
+    {
+      "type": "",
+      "date": "",
+      "description": ""
+    }
+  ],
+  "relationship_summary": ""
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

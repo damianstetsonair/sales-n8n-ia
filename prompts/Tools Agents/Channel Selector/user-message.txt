@@ -1,0 +1,70 @@
+This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "agent_id": "channel_selector",
+  "decision": {
+    "primary_channel": "EMAIL",
+    "primary_confidence": 0.8,
+    "backup_channel": "LINKEDIN",
+    "backup_reason": "",
+    "per_channel_analysis": {
+      "EMAIL": {
+        "available": true,
+        "suitability_score": 0.0,
+        "health_score": 0.0,
+        "relationship_appropriateness": "medium",
+        "urgency_alignment": "medium",
+        "positive_signals": [],
+        "negative_signals": []
+      },
+      "LINKEDIN": {
+        "available": true,
+        "suitability_score": 0.0,
+        "health_score": 0.0,
+        "relationship_appropriateness": "medium",
+        "urgency_alignment": "medium",
+        "positive_signals": [],
+        "negative_signals": []
+      },
+      "WHATSAPP": {
+        "available": false,
+        "suitability_score": 0.0,
+        "health_score": 0.0,
+        "relationship_appropriateness": "low",
+        "urgency_alignment": "low",
+        "positive_signals": [],
+        "negative_signals": []
+      },
+      "PHONE": {
+        "available": true,
+        "suitability_score": 0.0,
+        "health_score": 0.0,
+        "relationship_appropriateness": "medium",
+        "urgency_alignment": "high",
+        "positive_signals": [],
+        "negative_signals": []
+      }
+    },
+    "decision_factors": {
+      "primary_factor": "channel_health",
+      "secondary_factors": [],
+      "summary": ""
+    }
+  }
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

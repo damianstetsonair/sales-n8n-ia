@@ -1,0 +1,34 @@
+This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "agent_id": "sequence_strategist",
+  "sequence_strategy": {
+    "is_sequence": false,
+    "sequence_type": "standalone",
+    "reasoning": "",
+    "total_touches": 1,
+    "min_days_between_touches": 0,
+    "cadence_days": 0,
+    "touches": [],
+    "exit_conditions": {
+      "immediate": [],
+      "end_of_sequence": []
+    }
+  }
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

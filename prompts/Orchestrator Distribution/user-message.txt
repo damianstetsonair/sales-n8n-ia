@@ -1,0 +1,33 @@
+Process this contact and call all analysis tools.
+
+INPUT DATA:
+{{ $json.toJsonString() }}
+
+---
+
+CURRENT DATE/TIME: {{ $now.toISO() }}
+
+---
+
+INSTRUCTIONS:
+
+1. CALL ALL 4 TOOLS in order:
+   - Context Analyzer
+   - Opportunity Detector
+   - State Analyzer
+   - Timing Strategist
+
+2. CONSOLIDATE all tool responses into your final output
+
+3. DETECT any missing data and add warnings
+
+Remember:
+- Call EACH tool exactly ONCE
+- Capture the COMPLETE response from each tool
+- Include ALL responses in wave1_results
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

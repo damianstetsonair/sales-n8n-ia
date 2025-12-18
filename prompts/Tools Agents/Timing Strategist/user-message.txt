@@ -1,0 +1,50 @@
+This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+CURRENT DATE/TIME REFERENCE (CRITICAL):
+Today is: {{ $now.toISO() }}
+Use this as your reference for ALL time calculations.
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "agent_id": "timing_strategist",
+  "recommended_timing": {
+    "mode": "specific_datetime",
+    "recommended_local_datetime": null,
+    "wait_days": 0,
+    "day_of_week": "",
+    "local_hour_range": "",
+    "timezone": "",
+    "reason": ""
+  },
+  "backup_timing": {
+    "day_of_week": "",
+    "local_hour_range": "",
+    "reason": ""
+  },
+  "patterns": {
+    "best_days_of_week": [],
+    "best_hour_ranges": [],
+    "average_response_time_hours": null,
+    "peak_engagement_comment": ""
+  },
+  "recommended_velocity": {
+    "level": "high",
+    "min_days_between_touches": 0,
+    "comment": ""
+  }
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

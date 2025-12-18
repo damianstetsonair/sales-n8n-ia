@@ -1,0 +1,94 @@
+=### INPUT - Wave 1 Results:
+{{ $('Orchestrator Distribution').first().json.output }}
+---
+### HISTORICAL VALIDATED EXAMPLES (Learn from past successful decisions)
+The following are REAL recommendations that were VALIDATED by humans. Use them as reference for tone, style, channel selection, and decision-making patterns (ignore if empty):
+{{ $('Get historial recomendations').item.json.toJsonString() ?? 'empty' }}
+
+**Guidelines for using historical examples:**
+Compare generated content TONE and STYLE against validated examples
+- Check if channel selection aligns with historically successful channels
+- Use patterns to calibrate your quality assessment
+- Flag significant deviations from successful patterns
+
+## YOUR TASK
+
+1. **CALL ALL THREE TOOLS** (Channel Selector, Content Generator, Sequence Strategist) with the Wave 1 results
+2. **CAPTURE their outputs** exactly as returned
+3. **EVALUATE** the quality of all results (Wave 1 + Wave 2)
+4. **DECIDE**: retry Wave 1 or continue to Synthesis
+
+---
+
+## CRITICAL: You MUST output valid JSON with this EXACT structure:
+
+{
+  "agent_id": "evaluation_orchestrator",
+  "phase": "wave2_evaluation",
+  "wave2_results": {
+    "channel_selector": {
+      "raw_output": <PASTE EXACT OUTPUT FROM CHANNEL SELECTOR TOOL>,
+      "extracted": {
+        "recommended_channel": "linkedin|email|whatsapp|phone",
+        "fallback_channel": "...",
+        "channel_rationale": "...",
+        "confidence": 0.0
+      }
+    },
+    "content_generator": {
+      "raw_output": <PASTE EXACT OUTPUT FROM CONTENT GENERATOR TOOL>,
+      "extracted": {
+        "generated_content": {
+          "linkedin": { "message": "...", "tone": "..." },
+          "email": { "subject": "...", "body": "...", "tone": "..." }
+        },
+        "content_rationale": "...",
+        "confidence": 0.0
+      }
+    },
+    "sequence_strategist": {
+      "raw_output": <PASTE EXACT OUTPUT FROM SEQUENCE STRATEGIST TOOL>,
+      "extracted": {
+        "is_sequence": true|false,
+        "sequence_length": 0,
+        "recommended_sequence": [],
+        "confidence": 0.0
+      }
+    }
+  },
+  "evaluation_decision": {
+    "action": "continue|retry",
+    "retry_instructions": {
+      "context_relationship_analyzer": "specific instruction or null",
+      "opportunity_detector": "specific instruction or null",
+      "state_analyzer": "specific instruction or null",
+      "timing_strategist": "specific instruction or null"
+    },
+    "reasoning": "..."
+  },
+  "quality_assessment": {
+    "wave1_coherence": 0.0,
+    "wave2_coherence": 0.0,
+    "cross_wave_alignment": 0.0,
+,
+    "identified_issues": [],
+    "strengths": []
+  },
+  "historical_context": {
+    {{ $('Get historial recomendations').item.json.toJsonString() ?? {} }}
+  }
+}
+
+Current iteration: {{ $('Constants').first().json.iteration_count }} of {{ $('Constants').first().json.SEMANTIC_CONSTANTS.MAX_RETRY_ITERATIONS }}
+
+IMPORTANT: 
+- If current iteration >= max iterations, you MUST set action = "continue"
+- ALWAYS include the COMPLETE outputs from each tool in wave2_results
+- The Synthesis orchestrator DEPENDS on wave2_results to make final decisions
+- You have historical validated examples - USE THEM to calibrate quality expectations
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

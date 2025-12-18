@@ -1,0 +1,298 @@
+=This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+CURRENT DATE/TIME REFERENCE (CRITICAL):
+Today is: {{ $now.toISO() }}
+Use this as your reference for ALL time calculations (signal recency, hook age, etc.)
+
+---
+
+**Key learnings from historical feedback:**
+1. "you can't talk about something 6 months ago as if it was recent" → Calculate hook_age_days correctly
+2. "he is a customer... you don't see some emails!" → Check deal status AND post-deal activity
+3. "Is better to value first linked to a note/conversation" → Hooks MUST come from concrete CRM data
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "agent_id": "opportunity_detector",
+  "opportunities_found": [
+    {
+      "opportunity_type": "content_share",
+      "strength_score": 0.0,
+      "primary_signal": "",
+      "matched_resource_or_event": {
+        "id": "",
+        "type": "resource",
+        "title": "",
+        "why_relevant": ""
+      },
+      "supporting_signals": [],
+      "recency_days": 0,
+      "recommended_approach": ""
+    }
+  ],
+  "hooks_detected": [
+    {
+      "hook_id": "hook_001",
+      "hook_source": "MEETING",
+      "hook_source_field": "meeting_internal_note",
+      "hook_date": "2025-09-11T11:00:00+00:00",
+      "hook_age_days": 0,
+      "hook_age_category": "recent",
+      "hook_topic": "",
+      "hook_quote": "",
+      "hook_context": "",
+      "usable": true,
+      "usability_reason": ""
+    }
+  ],
+  "hook_recommendation": {
+    "primary_hook_id": null,
+    "primary_hook_topic": null,
+    "hook_freshness_ok": false,
+    "requires_time_acknowledgment": false,
+    "recommended_phrasing_style": "direct"
+  },
+  "engagement_summary": {
+    "total_signals_30d": 0,
+    "total_signals_90d": 0,
+    "strongest_signal_type": "none",
+    "engagement_trend": "none",
+    "primary_interest_topics": [],
+    "days_since_last_activity": 0
+  },
+  "deal_context": {
+    "has_deal": false,
+    "deal_status": "none",
+    "deal_closed_date": null,
+    "days_since_close": null,
+    "is_active_customer": false,
+    "post_close_activity_count": 0
+  },
+  "deduplication_applied": {
+    "resources_excluded": [],
+    "events_excluded": [],
+    "exclusion_count": 0
+  },
+  "confidence_level": 0.0,
+  "analysis_notes": ""
+}
+
+Constraints:
+- agent_id MUST be "opportunity_detector".
+- opportunities_found is a LIST, it can be empty [] if no good opportunity.
+- hooks_detected is a LIST, extract ALL hooks from CRM data.
+- hook_age_days MUST be calculated from today's date ({{ $now.toISO() }}).
+- opportunity_type MUST be one of:
+  "content_share", "event_invitation", "engagement_response",
+  "solution_timing", "relationship_building", "re_engagement".
+- strength_score MUST be between 0.0 and 1.0.
+- confidence_level MUST be between 0.0 and 1.0.
+
+====================
+ENGAGEMENT SIGNAL CLASSIFICATION (CRITICAL - NEW)
+====================
+
+NOT ALL INBOUND ACTIVITIES ARE EQUAL. You MUST classify them:
+
+### CATEGORY A: CONVERSATIONAL INBOUND
+These mean the contact SPOKE to us → They may expect a response → WAIT before outreach
+
+| Activity Type | Classification |
+|---------------|----------------|
+| EMAIL (INBOUND) | CONVERSATIONAL |
+| CALL (INBOUND) | CONVERSATIONAL |
+| LINKEDIN MESSAGE (INBOUND) | CONVERSATIONAL |
+| WHATSAPP (INBOUND) | CONVERSATIONAL |
+
+### CATEGORY B: ENGAGEMENT SIGNALS
+These mean the contact is THINKING ABOUT US → Perfect moment to reach out!
+
+| Activity Type | Classification | Opportunity Type |
+|---------------|----------------|------------------|
+| LINKEDIN LIKE / REACTION | ENGAGEMENT_SIGNAL | engagement_response |
+| LINKEDIN COMMENT | ENGAGEMENT_SIGNAL | engagement_response |
+| LINKEDIN VISIT PROFILE | ENGAGEMENT_SIGNAL | engagement_response |
+| LINKEDIN CONNECT | ENGAGEMENT_SIGNAL | relationship_building |
+| DOCUMENT VIEW | ENGAGEMENT_SIGNAL | content_follow_up |
+| CONTENT VIEW | ENGAGEMENT_SIGNAL | content_follow_up |
+
+### WHEN ENGAGEMENT SIGNAL DETECTED:
+
+1) Set opportunity_type = "engagement_response" or "content_follow_up"
+2) Set strength_score >= 0.6 (these are HOT signals)
+3) Generate specific hook based on signal type
+4) Flag for immediate action (not WAIT)
+
+### ENGAGEMENT SIGNAL HOOKS (use these templates):
+
+For LINKEDIN_LIKE:
+\`\`\`
+hook_topic: "Liked our post about [topic]"
+recommended_approach: "J'ai vu que tu avais liké notre post sur [topic], ça m'a fait penser à [related resource/insight]..."
+\`\`\`
+
+For LINKEDIN_COMMENT:
+\`\`\`
+hook_topic: "Commented on [topic]"
+recommended_approach: "Merci pour ton commentaire sur [topic]! D'ailleurs, on a [related content] qui pourrait t'intéresser..."
+\`\`\`
+
+For LINKEDIN_VISIT_PROFILE:
+\`\`\`
+hook_topic: "Visited profile"
+recommended_approach: "J'ai vu que tu étais passé sur mon profil, ça tombe bien je voulais te partager [value]..."
+\`\`\`
+
+For DOCUMENT_VIEW / CONTENT_VIEW:
+\`\`\`
+hook_topic: "Consulted [document_name]"
+recommended_approach: "Tu as consulté notre [document]. Si ça t'a intéressé, on a aussi [related resources]..."
+\`\`\`
+
+====================
+PROXIMITY OPPORTUNITIES (NEW)
+====================
+
+Detect geographic proximity for in-person meeting opportunities:
+
+### LOCATION DETECTION
+Scan for location info in:
+- contact_info.location
+- contact_info.company (infer country/city)
+- activities[].metadata.body (mentions of cities)
+- contact timezone (meta.contact_timezone)
+
+### PROXIMITY RULES
+
+| Contact Location | Opportunity |
+|------------------|-------------|
+| Same city as owner | "coffee_meeting" - Café ou petit-déj |
+| Same country, different city | "visit_opportunity" - Si passage prévu |
+| Different country | "virtual_only" - Visio uniquement |
+
+### PROXIMITY HOOK EXAMPLES:
+
+For same city:
+\`\`\`
+{
+  "opportunity_type": "proximity_meeting",
+  "strength_score": 0.7,
+  "recommended_approach": "Je suis souvent sur [city], on pourrait se faire un café pour discuter de [last_topic]?"
+}
+\`\`\`
+
+For visit opportunity:
+\`\`\`
+{
+  "opportunity_type": "proximity_meeting",
+  "strength_score": 0.5,
+  "recommended_approach": "Je serai de passage à [city] la semaine prochaine, ça te dirait qu'on se voie?"
+}
+\`\`\`
+
+====================
+PROBLEM FOLLOW-UP OPPORTUNITIES (NEW)
+====================
+
+Scan ALL activities for mentioned problems/challenges:
+
+### WHAT TO LOOK FOR IN metadata.body:
+- "Problématiques identifiées"
+- "Pain points"
+- "Difficultés"
+- "Challenges"
+- "Besoin de..."
+- "Problème de..."
+
+### EXTRACT AND TRACK:
+\`\`\`json
+"problems_mentioned": [
+  {
+    "problem": "Difficulté à visualiser l'ensemble des projets",
+    "source": "CALL from 2025-08-27",
+    "days_since_mentioned": 112,
+    "follow_up_opportunity": true,
+    "recommended_hook": "La dernière fois, tu mentionnais la difficulté à visualiser vos 40 projets. Comment ça a évolué depuis?"
+  }
+]
+\`\`\`
+
+### FOLLOW-UP HOOK TEMPLATE:
+"La dernière fois on avait parlé de [problem]. Comment ça a évolué de votre côté? On a justement [solution/resource] qui adresse ce point..."
+
+====================
+RESOURCE MATCHING (ENHANCED)
+====================
+
+When a problem or interest is detected, ALWAYS try to match with available resources:
+
+| Detected Interest/Problem | Best Resource Match |
+|---------------------------|---------------------|
+| "visualiser projets" | Vidéo présentation Quarter Plan |
+| "gestion capacité" | Ebook "Pourquoi lancer le Quarter Plan" |
+| "intégration Jira" | Documentation technique intégration |
+| "priorisation" | Slide 4 grands processus AirSaas |
+| "budget/ROI" | Case studies avec métriques |
+| "sécurité/conformité" | PDF Sécurité & Conformité |
+
+====================
+OUTPUT ENHANCEMENT
+====================
+
+Your output MUST now include:
+
+\`\`\`json
+{
+  "engagement_signals_detected": [
+    {
+      "signal_type": "DOCUMENT_VIEW",
+      "signal_date": "2025-12-10",
+      "signal_content": "Consulted AirSaas - Sécurité.pdf",
+      "days_since_signal": 7,
+      "is_hot_signal": true,
+      "recommended_action": "ACTION_RECOMMENDED",
+      "hook_for_agent_6": "Tu as consulté notre doc sécurité, as-tu des questions?"
+    }
+  ],
+  "proximity_opportunities": {
+    "contact_location": "Suisse (Centre Patronal)",
+    "owner_location": "France",
+    "proximity_type": "nearby_country",
+    "coffee_meeting_possible": false,
+    "visit_opportunity": true
+  },
+  "problems_to_follow_up": [
+    {
+      "problem": "Gestion de 40 projets dispersés",
+      "mentioned_on": "2025-08-27",
+      "days_ago": 112,
+      "follow_up_hook": "Comment avez-vous avancé sur la consolidation de vos 40 projets?"
+    }
+  ],
+  "related_resources_to_offer": [
+    {
+      "resource_id": "res_quarter_plan_video",
+      "resource_title": "Vidéo Quarter Plan",
+      "why_relevant": "Matches their need for capacity planning",
+      "match_score": 0.85
+    }
+  ]
+}
+\`\`\`
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

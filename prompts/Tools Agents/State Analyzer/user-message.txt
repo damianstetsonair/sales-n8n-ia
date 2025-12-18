@@ -1,0 +1,68 @@
+=This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+CURRENT DATE/TIME REFERENCE (CRITICAL):
+Today is: {{ $now.toISO() }}
+Use this as your reference for ALL time calculations (days_since_last_interaction, etc.)
+
+---
+
+You MUST output ONE single JSON object with this exact shape and with VALID JSON syntax.
+- Double quotes for all keys and string values.
+- No trailing commas.
+- No comments.
+- No additional keys.
+
+The JSON object MUST have exactly these keys:
+
+{
+  "agent_id": "state_analyzer",
+  "per_channel_state": [
+    {
+      "channel": "EMAIL",
+      "state": "never_contacted",
+      "last_interaction_date": null,
+      "last_interaction_direction": "NONE",
+      "days_since_last_interaction": null,
+      "consecutive_outbound_without_reply": 0
+    }
+  ],
+  "global_state": {
+"meeting_scheduled": {
+      "has_upcoming_meeting": false,
+      "meeting_date": null,
+      "meeting_type": null,
+      "meeting_source": null,
+      "source_activity_id": null,
+      "source_quote": null,
+      "days_until_meeting": null,
+      "meeting_proposed_not_confirmed": false,
+      "proposed_dates": []
+    },
+    "temperature": "cold",
+    "action_needed": false,
+    "urgency": "none",
+    "who_has_ball": "neither",
+    "reason": "",
+    "deal_context": {
+      "has_deal": false,
+      "deal_status": "none",
+      "days_since_close": null,
+      "post_close_activity_count": 0
+    },
+    "follow_up_timing": {
+      "scenario": "standard_outbound",
+      "hours_or_days_elapsed": 0,
+      "timing_verdict": "WAIT",
+      "long_timeline_detected": false,
+      "reasoning": ""
+    }
+  }
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

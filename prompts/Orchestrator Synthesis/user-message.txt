@@ -1,0 +1,83 @@
+=### WAVE 1 RESULTS (Analysis Phase):
+{{ $('Orchestrator Distribution').first().json.output }}
+---
+### WAVE 2 RESULTS (Action Phase):
+{{ $('Orchestrator Evaluation').first().json.output }}
+---
+### CONTACT INFO:
+{{ $('Input Validator').first().json.contact_info }}
+---
+### TODAY'S DATE: {{ $today.toString() }}
+---
+
+## YOUR TASK
+Synthesize ALL agent results into ONE final actionable recommendation.
+Consider these inputs in order of priority:
+1. **Wave 1 analysis**: Relationship stage, opportunities, conversation state, optimal timing
+2. **Wave 2 actions**: Selected channel, generated content, sequence strategy
+3. **Historical patterns**: What worked before with similar contacts (if examples available)
+4. **Contact context**: Specific situation and communication history
+You MUST output valid JSON with this EXACT structure (no markdown, no backticks):
+{
+  "orchestrator_id": "orchestrator_synthesis",
+  "phase": "synthesis",
+  "final_decision": {
+    "contact_fullname": "...",
+    "action": "send_message|schedule_call|wait|no_action",
+    "selected_channel": "linkedin|email|whatsapp|phone",
+    "selected_content": {
+      "message": "...",
+      "subject": "..." (only for email),
+      "tone": "...",
+      "content_source": "wave2_content_generator"
+    },
+    "execution_timing": {
+      "execute_at": "ISO8601 datetime",
+      "timezone": "...",
+      "timing_rationale": "..."
+    },
+    "sequence_instructions": {
+      "is_part_of_sequence": true|false,
+      "current_step": 1,
+      "total_steps": 0,
+      "sequence_plan": []
+    },
+    "rationale": {
+      "overall_strategy": "...",
+      "channel_reasoning": "...",
+      "content_reasoning": "...",
+      "timing_reasoning": "...",
+      "sequence_reasoning": "...",
+      "historical_alignment": "How this decision aligns with past validated examples (or 'No historical data' if none)",
+      "confidence_factors": {
+        "relationship_clarity": 0.0,
+        "opportunity_strength": 0.0,
+        "channel_certainty": 0.0,
+        "content_quality": 0.0,
+        "timing_accuracy": 0.0,
+        "historical_pattern_match": 0.0
+      }
+    },
+    "risk_factors": [],
+    "success_criteria": {
+      "immediate": "...",
+      "short_term": "...",
+      "medium_term": "..."
+    }
+  },
+  "metadata": {
+    "synthesis_confidence": 0.0,
+    "agents_consulted": {
+      "wave_1": ["context_analyzer", "opportunity_detector", "state_analyzer", "timing_strategist"],
+      "wave_2": ["channel_selector", "content_generator", "sequence_strategist"]
+    },
+    "iterations_total": 0,
+    "processing_notes": "..."
+  }
+}
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }

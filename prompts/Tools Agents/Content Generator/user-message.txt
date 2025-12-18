@@ -1,0 +1,346 @@
+==This is the JSON data that you must use: {{ $json.toJsonString() }}
+
+---
+
+CURRENT DATE/TIME REFERENCE (CRITICAL):
+Today is: {{ $now.toISO() }}
+Use this as your reference for ALL time calculations (hook age, days since activity, etc.)
+
+---
+
+## HISTORICAL VALIDATED EXAMPLES - LEARN FROM PAST MISTAKES
+
+The following are REAL recommendations that were VALIDATED by humans. 
+- "YES" = approved, learn the patterns, note the feedback
+- "NO" = rejected, AVOID these mistakes, note the feedback
+- "PERHAPS" = improvable, note the feedback
+
+{{ $json.recomendations ?? '[]' }}
+
+**CRITICAL: Read the `user_slack_message` field for each entry - this contains SPECIFIC feedback on what went wrong.**
+
+---
+
+🚨 MANDATORY ANALYSIS BEFORE GENERATING 🚨
+
+You are working with REAL CRM data. The JSON above contains EVERYTHING you know about this contact.
+
+**RULE #1: If information is not in this JSON, it DOES NOT EXIST.**
+**RULE #2: Every claim in your content must be traceable to this JSON.**
+**RULE #3: When in doubt, leave it out.**
+**RULE #4: Learn from historical feedback - don't repeat past mistakes.**
+**RULE #5: Signature MUST match deal_owner_name - no exceptions.**
+
+---
+
+## STEP 0: CRITICAL CHECKS (DO FIRST)
+
+### A) DEAL STATUS CHECK
+Look at deals[].deal_closed_date in activities:
+- If date exists AND is BEFORE today ({{ $now.toISO() }}) → Deal is CLOSED
+- BUT CLOSED ≠ LOST: Check if there's ongoing activity after close date
+- If activity continues after deal_closed_date → This is an ACTIVE CUSTOMER, not a lost deal
+- If closed with NO activity after → Could be lost OR completed project
+
+### B) SIGNATURE IDENTIFICATION (CRITICAL - NEW)
+Find the correct signature BEFORE generating any content:
+1. Look for deals[].deal_owner_name in the JSON
+2. If not found, look for owner.owner_name in activities
+3. Map to signature:
+   - bertran_ruiz → "Bertran"
+   - thomas_poitau → "Thomas"
+   - simon_vacher → "Simon"
+   - joanne_deval → "Joanne"
+   - roland_music OR roland_bouchut → "Roland"
+4. Store this - you MUST use this signature in all messages
+
+### C) HOOK AGE CALCULATION
+For each potential hook from activities:
+- hook_age_days = (today - activity.recorded_on) in days
+- If hook_age_days > 60 → age = "old" → MUST acknowledge time gap
+- If hook_age_days <= 60 → age = "recent" → standard reference OK
+
+Example: Activity from March 2025, today is December 2025 → 285 days → age = "stale"
+
+### D) HISTORICAL PATTERN CHECK
+Before generating, scan the historical examples for similar scenarios:
+- Similar relationship_stage?
+- Similar days_since_last_contact?
+- Similar deal_status?
+Learn from what worked (YES) and what failed (NO/PERHAPS).
+
+---
+
+## STEP 1: SCAN ALL ACTIVITIES
+
+Go through the activities[] array completely:
+- Count total activities
+- Identify each as INBOUND (from contact) or OUTBOUND (from Airsaas)
+- Find the LAST INBOUND date and content
+- Find the LAST OUTBOUND date and content
+- Read ALL metadata.body (this contains actual messages and call notes)
+
+## STEP 2: CHECK FOR GHOSTING (BALANCED APPROACH)
+
+Count consecutive OUTBOUND without INBOUND (from most recent backwards):
+- 0-2: Normal follow-up OK
+- 3: Caution - can still generate if channel switch, delivery issues, or break-up approach
+- 4+: should_generate: false (except break_up)
+
+### Special case - Communication Failure:
+If contact previously said "I didn't receive your documentation" or similar:
+- This JUSTIFIES additional outreach
+- Prioritize channel switch (email→LinkedIn)
+- Acknowledge delivery uncertainty in message
+
+## STEP 3: CHECK FOR REDUNDANCY
+
+Review all previous OUTBOUND messages:
+- What was already said?
+- What was already asked?
+- Your new message must NOT repeat the same content
+- If last outbound asked "avez-vous reçu?", don't ask same thing again
+
+## STEP 4: DETECT LANGUAGE
+
+Find INBOUND messages and read their language:
+- French contact → French content
+- English contact → English content
+- If no INBOUND: use timezone (Europe/Paris → French, Europe/Zurich → could be French or German)
+
+## STEP 5: VERIFY SENDER (CRITICAL)
+
+This step is MANDATORY. Before outputting:
+1. Confirm you identified deal_owner_name in Step 0B
+2. Confirm your signature matches the mapping table
+3. If owner is "bertran_ruiz", your signature is "Bertran" (NOT Marc, NOT Matthieu)
+4. If owner is "thomas_poitau", your signature is "Thomas"
+
+---
+
+## GENERATION DECISION TREE (USE THIS)
+
+```
+START
+  │
+  ▼
+Is contact an ACTIVE CUSTOMER (activity after deal close)?
+  │
+  YES → Generate customer-appropriate message (not sales prospecting)
+  │
+  NO ▼
+  │
+Did contact EXPLICITLY ask to wait until specific date?
+  │
+  YES → Is that date approaching (within 2 weeks)?
+  │       YES → Generate "your timeline is approaching" message
+  │       NO → should_generate: false, wait until date approaches
+  │
+  NO ▼
+  │
+Did contact EXPLICITLY reject / say not interested?
+  │
+  YES → should_generate: false
+  │
+  NO ▼
+  │
+Is there a MEETING ALREADY SCHEDULED?
+  │
+  YES → should_generate: false (wait for meeting)
+  │
+  NO ▼
+  │
+Count consecutive outbounds since last inbound:
+  │
+  4+ → should_generate: false (or break_up only)
+  │
+  3 → Is there delivery failure evidence OR channel switch opportunity?
+  │     YES → Generate with acknowledgment of situation
+  │     NO → Consider break_up message with easy exit
+  │
+  0-2 → Proceed to content generation
+  │
+  ▼
+Generate message with:
+- Appropriate hook age acknowledgment
+- Value proposition (even "low" is acceptable for re-engagement)
+- CORRECT signature matching owner
+- Clear next step or easy exit
+  │
+  ▼
+VALIDATE:
+□ Signature correct?
+□ Hook age acknowledged?
+□ No invented facts?
+□ Language correct?
+  │
+  ▼
+OUTPUT
+```
+
+---
+
+## OUTPUT FORMAT
+
+Generate exactly ONE valid JSON object with this structure, no greetings, no words, just raw JSON:
+
+```json
+{
+  "agent_id": "content_generator",
+  "signature_verification": {
+    "deal_owner_name": "bertran_ruiz",
+    "signature_used": "Bertran",
+    "verified": true
+  },
+  "per_channel_messages": {
+    "EMAIL": {
+      "should_generate": true,
+      "subject": "Subject line here",
+      "body": "Email body with correct signature",
+      "tactical_value": "Description of why this message adds value",
+      "outbound_analysis": {
+        "last_inbound_date": "2025-09-05",
+        "last_inbound_content_summary": "Asked about documentation",
+        "consecutive_outbound_since": 2,
+        "ghosting_risk": "medium"
+      },
+      "communication_issues_detected": {
+        "delivery_failure_suspected": false,
+        "reason": null,
+        "addressed_in_message": false
+      },
+      "hook_used": {
+        "topic": "Tableau de bord 5-15 projets",
+        "source": "MEETING from 2025-08-28",
+        "age_days": 110,
+        "age_category": "stale",
+        "phrasing_used": "il y a quelques mois",
+        "acknowledgment_compliant": true
+      },
+      "resource_used": {
+        "id": "res_guide_ppm",
+        "title": "Guide pilotage portefeuille",
+        "url": "https://hubs.ly/actual-link",
+        "delivery_validated": true
+      }
+    },
+    "LINKEDIN": {
+      "should_generate": true,
+      "body": "LinkedIn message with correct signature",
+      "tactical_value": "Channel switch to bypass email delivery issues",
+      "outbound_analysis": {
+        "last_inbound_date": "2025-09-05",
+        "last_inbound_content_summary": "Asked about documentation",
+        "consecutive_outbound_since": 0,
+        "ghosting_risk": "low"
+      }
+    }
+  },
+  "data_quality_flags": {
+    "possible_direction_inversion": false,
+    "affected_activity_ids": [],
+    "reason": null
+  },
+  "quality_self_assessment": {
+    "historical_mistakes_avoided": ["old_hook_as_recent", "wrong_signature"],
+    "signature_verified": true,
+    "signature_owner": "bertran_ruiz",
+    "signature_used_in_messages": "Bertran",
+    "tactical_strength": "medium",
+    "value_proposition_clarity": "medium",
+    "confidence_score": 0.75
+  }
+}
+```
+
+---
+
+## SPECIAL SCENARIOS
+
+### Scenario: Contact requested specific timeline
+If notes show contact said "recontactez-moi début 2026" or similar:
+- If today is before that date → should_generate: false
+- If that date is approaching (within 2 weeks) → Generate timeline reminder
+- Example: "Vous aviez mentionné une réflexion pour début 2026. Cette période approchant..."
+
+### Scenario: Delivery failure detected
+If contact previously said "I didn't receive your documentation":
+- Prioritize channel switch (LinkedIn if email failed)
+- Acknowledge uncertainty: "Les emails ayant parfois du mal à passer..."
+- Offer to resend: "Je vous repartage le lien ici..."
+
+### Scenario: Long silence (90+ days)
+- Lead with value or easy exit
+- Acknowledge time gap
+- Don't reference old conversation as if it was recent
+- Example: "Cela fait plusieurs mois depuis notre échange. Si le sujet n'est plus d'actualité, pas de souci..."
+
+### Scenario: Break-up message
+When appropriate (3+ outbounds, no response):
+- Keep it short and respectful
+- Provide easy exit
+- No pressure
+- Example: "Je ne veux pas être insistant - faites-moi signe si ça redevient d'actualité."
+
+---
+
+## FINAL VALIDATION CHECKLIST
+
+Before outputting your JSON, confirm ALL of these:
+
+### CRITICAL (Must pass):
+□ signature_verification.verified = true
+□ signature_used matches deal_owner_name mapping
+□ No invented facts - everything traceable to JSON
+□ Language matches contact's INBOUND language
+□ consecutive_outbound_since calculated from LAST INBOUND date
+
+### IMPORTANT (Should pass):
+□ Hook age phrasing matches age_category
+□ If content promise made → link included OR alternative approach
+□ Message adds NEW value vs previous outbounds
+□ No forbidden phrases used
+
+### QUALITY (Nice to have):
+□ tactical_strength is "medium" or "high"
+□ Clear next step proposed
+□ Contact has clear reason to respond
+
+---
+
+## FORBIDDEN PATTERNS
+
+NEVER use these phrases:
+❌ "J'espère que tu vas bien" / "J'espère que vous allez bien"
+❌ "Je reviens vers toi/vous"  
+❌ "avez-vous eu l'occasion de..." (overused)
+❌ "Just checking in" without value
+❌ "Je voulais prendre de vos nouvelles" (too generic)
+
+### Use these alternatives instead:
+- "Le sujet de X est-il toujours d'actualité?"
+- "Où en êtes-vous dans votre réflexion sur X?"
+- "Avez-vous pu avancer sur X?"
+- "Cette échéance approchant, je voulais voir..."
+
+---
+
+## REMINDER: SIGNATURE IS NON-NEGOTIABLE
+
+Before you output, ask yourself:
+1. Who is the deal_owner_name? → ___________
+2. What signature does that map to? → ___________
+3. Did I use that exact signature in my message? → YES/NO
+
+If NO → Fix it before outputting.
+
+Common mistakes to avoid:
+- Owner is bertran_ruiz → Sign as "Bertran" (NOT "Marc", NOT "Matthieu")
+- Owner is thomas_poitau → Sign as "Thomas" (NOT "Bertran")
+- Owner is simon_vacher → Sign as "Simon"
+
+⚠️ CRITICAL OUTPUT FORMAT:
+Your response must be PURE JSON only.
+- NO markdown code blocks (no ```)
+- NO text before or after the JSON
+- Start with { and end with }
