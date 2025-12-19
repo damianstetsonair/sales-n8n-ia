@@ -141,6 +141,183 @@ IF resource_gap_detected.gap_exists = true:
 - "Primary resource correctly selected with clear selection_reason"
 - "Resource gap properly identified with actionable alternative"
 
+### ⚠️ STAKEHOLDER MENTION VALIDATION (V11)
+
+When evaluating wave2_results.content_generator output:
+
+```
+CHECK: stakeholder_preservation
+IF wave1_results.context_relationship_analyzer.stakeholder_map.stakeholder_count > 1
+   AND wave1_results.context_relationship_analyzer.stakeholder_map.other_stakeholders[0].mentioned_in contains recent activity
+   AND wave2_results.content_generator.quality_self_assessment.stakeholder_handling.stakeholders_mentioned_in_message is empty
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "low",
+       "issue": "Other stakeholders not mentioned in re-engagement message",
+       "detail": "Stakeholder [X] was present in last interaction but not referenced in message. This reduces personalization and multi-threading potential.",
+       "resolution": "Consider adding stakeholder reference: 'depuis notre échange avec [X]'"
+     }
+   - Do NOT force retry (low severity) but flag for improvement
+```
+
+**ADD to strengths_found when stakeholders preserved:**
+- "Multi-stakeholder context preserved in message (mentioned: [names])"
+- "Multi-threading opportunity enabled through stakeholder reference"
+
+### ⚠️ RESOURCE SPECIFICITY VALIDATION (V11)
+
+When evaluating wave1_results.opportunity_detector resource selection:
+
+```
+CHECK: specificity_preference
+IF wave1_results.opportunity_detector.related_resources_to_offer contains multiple resources
+   AND resource with highest specificity_bonus is NOT the primary_resource_id
+   AND score difference < 0.10
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "medium",
+       "issue": "Generic resource selected over specific alternative",
+       "detail": "Resource [X] selected with score [Y] but resource [Z] addresses more specific pain point (specificity_bonus: [A] vs [B]). For re-engagement, specific > generic.",
+       "resolution": "Consider using [Z] as primary resource due to higher specificity for this contact's documented pain points"
+     }
+
+CHECK: resource_pain_point_alignment
+IF wave2_results.content_generator uses resource_id
+   AND that resource's hook_connection.connected_hook_id does NOT match the HIGHEST SPECIFICITY hook
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "low",
+       "issue": "Resource connected to generic hook instead of specific hook",
+       "detail": "Content uses [resource] connected to [generic_hook] but [specific_hook] with explicit tool mentions was available",
+       "resolution": "Bridge resource to specific pain point for stronger personalization"
+     }
+```
+
+**ADD to strengths_found when specificity is good:**
+- "High-specificity resource selected addressing explicit tool names mentioned"
+- "Resource connected to most specific pain point (not generic capability)"
+
+### 🚨 ACTIVE CUSTOMER MISCLASSIFICATION DETECTION (V12 - CRITICAL)
+
+**THIS IS THE HIGHEST PRIORITY VALIDATION. Check this FIRST.**
+
+An active customer treated as a dormant prospect is a CRITICAL ERROR that will:
+- Embarrass the company (sending "it's been a while since our demo" to someone with a meeting tomorrow)
+- Damage the relationship
+- Show the AI doesn't understand basic context
+
+```
+CHECK 1: Active Customer Detection
+IF wave1_results.opportunity_detector.deal_classification.classification = "DEAL_WON_DORMANT"
+   AND wave1_results.state_analyzer.deal_context.is_active_customer = true
+   OR wave1_results.state_analyzer.activity_scan_verification.days_since_last_activity <= 14
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "ACTIVE CUSTOMER MISCLASSIFIED AS DORMANT",
+       "detail": "Customer has activity within last 14 days but classified as dormant. days_since_last_activity = [X]",
+       "resolution": "ABORT - Do NOT generate re-engagement message. Customer is ACTIVE."
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.opportunity_detector = "CRITICAL: Rescan ALL activities. Customer has recent activity (last 14 days). Must classify as DEAL_WON_ACTIVE not DORMANT."
+   - Set retry_instructions.state_analyzer = "CRITICAL: Verify activity_scan_verification. Ensure all activities were scanned."
+
+CHECK 2: Meeting Scheduled for Active Customer
+IF wave1_results.state_analyzer.meeting_scheduled.has_upcoming_meeting = true
+   AND wave2_results.content_generator.per_channel_messages is NOT empty
+   AND message contains "re_engagement" patterns
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "RE-ENGAGEMENT MESSAGE FOR CUSTOMER WITH SCHEDULED MEETING",
+       "detail": "Customer has meeting scheduled for [date] but system generated re-engagement message",
+       "resolution": "ABORT - action should be 'wait' not 'send_message'. Meeting already scheduled."
+     }
+   - Set evaluation_decision.action = "retry"
+
+CHECK 3: Activity Recency Mismatch
+IF wave1_results.opportunity_detector.engagement_summary.days_since_last_activity > 90
+   AND wave1_results.state_analyzer.activity_scan_verification.days_since_last_activity < 30
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "ACTIVITY RECENCY MISMATCH BETWEEN AGENTS",
+       "detail": "Opportunity Detector sees [X] days silence, State Analyzer sees [Y] days. Agents are not reading same activities.",
+       "resolution": "CRITICAL: Both agents must rescan ALL activities."
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.opportunity_detector = "CRITICAL: Full activity rescan required. Discrepancy with State Analyzer."
+   - Set retry_instructions.state_analyzer = "CRITICAL: Verify activity scan. Discrepancy with Opportunity Detector."
+
+CHECK 4: Re-engagement Tone for Active Customer
+IF wave1_results.opportunity_detector.deal_classification.type = "Client actif"
+   AND wave2_results.content_generator output contains ANY of:
+     - "Ça fait un moment"
+     - "Cela fait plusieurs mois"
+     - "depuis notre démo"
+     - "depuis notre échange" (when referring to old event)
+     - "Nous n'avons pas eu l'occasion"
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "RE-ENGAGEMENT LANGUAGE FOR ACTIVE CUSTOMER",
+       "detail": "Content uses dormant/re-engagement patterns but customer is active (type = 'Client actif')",
+       "resolution": "Content Generator must use CUSTOMER_SUCCESS tone, not re-engagement."
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.content_generator = "CRITICAL: Customer is ACTIVE (Client actif). Use customer success tone, NOT re-engagement. Do NOT say 'it's been a while' or reference old demos."
+```
+
+**ADD to issues_found when active customer correctly identified:**
+- "Active customer correctly identified (last activity [X] days ago)"
+- "Meeting scheduled detected - wait action correctly recommended"
+
+### ⚠️ LINKEDIN URL STRATEGY VALIDATION (V11)
+
+When evaluating wave2_results.content_generator.per_channel_messages.LINKEDIN:
+
+```
+CHECK: linkedin_url_strategy_compliance
+IF wave2_results.content_generator.per_channel_messages.LINKEDIN.body contains "https://"
+   AND action_type IN ["re_engagement", "check_in"]
+   AND wave1_results.context_relationship_analyzer.relationship_depth_score < 7.0
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "medium",
+       "issue": "Cold URL included in LinkedIn re-engagement message",
+       "detail": "Message contains direct URL but contact is dormant with relationship score < 7.0. LinkedIn may filter this message and it feels transactional.",
+       "resolution": "Replace with 'offer to send' pattern: 'Je te l'envoie si ça t'intéresse' - creates micro-commitment and avoids filtering"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.content_generator = "Regenerate LinkedIn message using 'offer_to_send' URL strategy instead of direct URL inclusion"
+
+CHECK: url_strategy_documented
+IF channel = "LINKEDIN"
+   AND resource is included in message
+   AND linkedin_url_handling is not present in output
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "low",
+       "issue": "LinkedIn URL strategy not documented",
+       "detail": "Message includes resource reference but linkedin_url_handling metadata not provided",
+       "resolution": "Add linkedin_url_handling to output for transparency and sequence coordination"
+     }
+```
+
+**ADD to strengths_found when URL handled correctly:**
+- "LinkedIn URL strategy correctly applied: offer_to_send pattern used for re-engagement"
+- "Micro-commitment created instead of cold URL"
+- "URL escalation strategy defined for sequence steps"
+
 ---
 
 ## PHASE 3: OUTPUT YOUR DECISION

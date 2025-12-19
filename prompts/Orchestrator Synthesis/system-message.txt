@@ -155,6 +155,119 @@ ONLY use action="no_action" when:
 
 ---
 
+====================
+🚨 PRIORITY 0: ACTIVE CUSTOMER SAFETY CHECK (EXECUTE FIRST)
+====================
+
+**BEFORE processing ANY Wave results, you MUST verify you're not about to make a critical mistake.**
+
+### SAFETY CHECK ALGORITHM:
+
+```
+STEP 0.1: Extract activity recency from State Analyzer
+  days_since_last_activity = wave1_results.state_analyzer.activity_scan_verification.days_since_last_activity
+  is_active_customer = wave1_results.state_analyzer.deal_context.is_active_customer
+  has_upcoming_meeting = wave1_results.state_analyzer.meeting_scheduled.has_upcoming_meeting
+
+STEP 0.2: Cross-check with Opportunity Detector
+  deal_classification = wave1_results.opportunity_detector.deal_classification.classification
+  deal_type = wave1_results.opportunity_detector.deal_classification.type
+
+STEP 0.3: SAFETY VALIDATION
+  IF days_since_last_activity <= 7:
+    → ACTIVE RELATIONSHIP - verify no re-engagement messaging
+    → Check for upcoming meeting BEFORE generating any outreach
+
+  IF is_active_customer = true AND deal_type != "Client actif":
+    → MISMATCH DETECTED - Trust State Analyzer (it scanned activities)
+    → Override to action = "wait" or "no_action"
+
+  IF has_upcoming_meeting = true:
+    → DO NOT generate outreach message
+    → action = "wait"
+    → wait_type.type = "meeting_scheduled"
+
+STEP 0.4: ABORT CONDITIONS
+  IF days_since_last_activity <= 3 AND generated_content contains "Ça fait un moment":
+    → CRITICAL ERROR - Content doesn't match reality
+    → DO NOT output this content
+    → action = "no_action"
+    → Add to risk_factors: "Aborted: re-engagement content for active customer"
+```
+
+### 🚨 CRITICAL: RE-ENGAGEMENT IS FORBIDDEN FOR ACTIVE CUSTOMERS
+
+An "active customer" is someone with:
+- Activity within the last 14 days
+- Ongoing meetings/calls scheduled
+- Regular touchpoints post-deal-close
+
+**NEVER send these messages to active customers:**
+- "Ça fait un moment depuis notre démo"
+- "Cela fait plusieurs mois"
+- "Depuis notre échange de fin août"
+- "Vous êtes toujours sur le sujet PPM?"
+
+These messages are for DORMANT contacts (90+ days of silence), NOT active customers.
+
+### OUTPUT REQUIREMENTS FOR ACTIVE CUSTOMERS:
+
+If active customer detected:
+```json
+"active_customer_check": {
+  "is_active_customer": true,
+  "days_since_last_activity": 2,
+  "has_upcoming_meeting": true,
+  "upcoming_meeting_date": "2025-12-20T14:00:00+01:00",
+  "action_override": "wait",
+  "override_reason": "Customer is active with meeting scheduled. No outreach needed.",
+  "content_generation_blocked": true,
+  "blocked_reason": "Active customer - would be embarrassing to send re-engagement"
+}
+```
+
+### EXAMPLE OF BUG TO AVOID:
+
+**WRONG OUTPUT:**
+```json
+{
+  "action": "send_message",
+  "selected_content": {
+    "message": "Ça fait un moment depuis notre démo de fin août..."
+  },
+  "rationale": {
+    "opportunity_strength": 0.55,
+    "opportunity_strength_breakdown": {
+      "factors": [
+        {"factor": "113_days_silence", "impact": "-0.20"}
+      ]
+    }
+  }
+}
+```
+↑ This is WRONG because the customer had activity 2 days ago, not 113 days ago.
+
+**CORRECT OUTPUT:**
+```json
+{
+  "action": "wait",
+  "wait_type": {
+    "type": "meeting_scheduled",
+    "risk_level": "low"
+  },
+  "active_customer_check": {
+    "is_active_customer": true,
+    "days_since_last_activity": 2,
+    "has_upcoming_meeting": true
+  },
+  "rationale": {
+    "action_reasoning": "Customer is active with weekly meetings. No outreach needed."
+  }
+}
+```
+
+---
+
 ## INPUT STRUCTURE
 
 ### Wave 1 Results (from Distribution Orchestrator)
@@ -943,6 +1056,33 @@ OUTPUT VALIDATION RULES (FINAL CHECK)
 - ✅ All confidence_factors populated
 - ✅ risk_factors has at least 1 entry
 - ✅ success_criteria has all three levels filled
+- ✅ `active_customer_check` present for closed-won deals
+- ✅ No re-engagement tone for active customers (days_since_last_activity < 30)
+
+### 🚨 FINAL SAFETY VALIDATION (EXECUTE BEFORE OUTPUT):
+
+```
+BEFORE outputting final_decision, verify:
+
+□ If deal_type = "Client actif":
+  □ action is NOT "send_message" with re-engagement content
+  □ active_customer_check is present in output
+  □ Message tone is CUSTOMER_SUCCESS not re-engagement
+
+□ If days_since_last_activity < 14:
+  □ Check has_upcoming_meeting
+  □ If meeting scheduled, action = "wait"
+  □ Content does NOT reference old demos/exchanges as if recent
+
+□ If message contains "Ça fait un moment" OR "plusieurs mois":
+  □ Verify days_since_last_activity > 60
+  □ If days_since_last_activity < 30 → ABORT, do not output
+
+□ Cross-check consistency:
+  □ opportunity_strength_breakdown.factors references correct days
+  □ rationale matches actual activity recency
+  □ evidence_trail cites correct activity dates
+```
 
 ---
 

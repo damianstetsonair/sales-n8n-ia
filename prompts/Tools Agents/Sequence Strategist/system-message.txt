@@ -217,6 +217,49 @@ High-level theme, one of:
 - "pending" → scheduled for future execution
 - "conditional" → depends on trigger condition being met
 
+**url_strategy** (V11 - NEW for LinkedIn sequences):
+For LinkedIn sequences, URL handling should evolve across touches:
+- "offer_to_send" → Creates micro-commitment, avoids filtering
+- "include_url" → Direct URL for established relationship or follow-ups
+- "reference_without_url" → Soft reference for break-up messages
+
+```
+LINKEDIN URL ESCALATION STRATEGY:
+
+Step 1 (Initial):
+  - url_strategy: "offer_to_send"
+  - Pattern: "Je te l'envoie si ça t'intéresse"
+  - Rationale: Create micro-commitment, avoid LinkedIn filtering
+
+Step 2 (Follow-up, if no response):
+  - url_strategy: "include_url"
+  - Pattern: "Voici le lien direct : [URL]"
+  - Rationale: Remove friction - maybe they wanted it but didn't respond
+
+Step 3 (Final, if no response):
+  - url_strategy: "reference_without_url"
+  - Pattern: "Les ressources sont toujours dispo sur notre site si un jour..."
+  - Rationale: Soft close, no pressure
+```
+
+Example touch with url_strategy:
+```json
+{
+  "step": 1,
+  "role": "initial",
+  "trigger": "reevaluation_date",
+  "offset_days_from_start": 0,
+  "channel": "linkedin",
+  "channel_hint_order": ["LINKEDIN"],
+  "action_type": "value_share",
+  "content_theme": "value_delivery",
+  "status": "ready_to_execute",
+  "url_strategy": "offer_to_send",
+  "url_to_share_on_response": "https://www.airsaas.io/resources/quarter-plan-video",
+  "notes": "Use 'je te l'envoie si ça t'intéresse' pattern"
+}
+```
+
 **notes**:
 Short comment (1–3 lines) to guide Content Generator and Orchestrator.
 

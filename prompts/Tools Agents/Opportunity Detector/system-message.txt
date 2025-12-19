@@ -112,6 +112,62 @@ Example:
 - days_since = 96 days (NOT recent!)
 
 ====================
+🚨 MANDATORY: FULL ACTIVITY SCAN (STEP -1)
+====================
+
+**BEFORE classifying the deal, you MUST scan ALL activities to find the most recent one.**
+
+### ACTIVITY SCANNING ALGORITHM:
+
+```
+STEP -1.1: Initialize
+  - all_activities = []
+  - most_recent_activity = null
+  - most_recent_date = null
+
+STEP -1.2: Scan EVERY activity
+  FOR EACH activity in activities[]:
+    - Parse activity.recorded_on as datetime
+    - IF activity.recorded_on > most_recent_date:
+        → most_recent_date = activity.recorded_on
+        → most_recent_activity = activity
+        → most_recent_index = current_index
+
+STEP -1.3: Calculate recency
+  - days_since_most_recent = (reference_date - most_recent_date) in days
+
+STEP -1.4: Store for later use
+  - This most_recent_date will be used in deal classification
+```
+
+### ⚠️ CRITICAL: ACTIVITIES MAY NOT BE SORTED
+
+The activities[] array in the JSON may NOT be sorted by date!
+- activities[0] is NOT necessarily the most recent
+- You MUST scan ALL activities to find the true most recent
+- The most recent activity may be at ANY index
+
+### OUTPUT REQUIREMENT:
+
+Add to your output:
+```json
+"activity_scan": {
+  "total_activities": 155,
+  "most_recent_activity_date": "2025-12-16T07:49:00+00:00",
+  "most_recent_activity_type": "EMAIL",
+  "most_recent_activity_index": 0,
+  "days_since_most_recent": 2
+}
+```
+
+### 🚨 VALIDATION BEFORE DEAL CLASSIFICATION:
+
+Before classifying as DORMANT, verify:
+□ You have scanned ALL activities
+□ days_since_most_recent is calculated from reference_date
+□ If days_since_most_recent < 30, the customer is ACTIVE (not dormant)
+
+====================
 STEP 0: DEAL CLASSIFICATION (CRITICAL - DO FIRST)
 ====================
 
@@ -127,19 +183,68 @@ Before analyzing opportunities, you MUST classify the deal status using these PR
 | **DEAL_OPEN** | deal exists + deal_closed_date is NULL or in FUTURE | "Prospect" |
 | **NO_DEAL** | No deal found in activities[].deals[] | "Lead" |
 
-### DEAL CLASSIFICATION LOGIC (execute in order)STEP 1: Check if deal exists
-└─ IF activities[].deals[] is empty or null → NO_DEAL → Type = "Lead"STEP 2: Check deal name for nurturing signals
+### DEAL CLASSIFICATION LOGIC (execute in order)
+
+```
+STEP 1: Check if deal exists
+└─ IF activities[].deals[] is empty or null → NO_DEAL → Type = "Lead"
+
+STEP 2: Check deal name for nurturing signals
 └─ IF deal_name contains "nurturing|lost|perdu|abandonné|cancelled"
-→ DEAL_NURTURING → Type = "À réactiver"STEP 3: Check deal_closed_date
+   → DEAL_NURTURING → Type = "À réactiver"
+
+STEP 3: Check deal_closed_date
 └─ IF deal_closed_date is NULL or > reference_date
-→ DEAL_OPEN → Type = "Prospect"
+   → DEAL_OPEN → Type = "Prospect"
 └─ IF deal_closed_date < reference_date
-→ Continue to STEP 4STEP 4: Check post-close activity (for closed deals)
-└─ Count activities where recorded_on > deal_closed_date
-└─ IF post_close_activity_count > 0 AND last_activity < 90 days ago
-→ DEAL_WON_ACTIVE → Type = "Client actif"
-└─ IF post_close_activity_count = 0 OR last_activity > 90 days ago
-→ DEAL_WON_DORMANT → Type = "Client dormant"
+   → Continue to STEP 4
+
+STEP 4: Check post-close activity (for closed deals) - 🚨 CRITICAL STEP
+└─ Count ALL activities where recorded_on > deal_closed_date
+└─ Find MAX(recorded_on) among post-close activities
+└─ Calculate days_since_last_post_close_activity = (reference_date - MAX(recorded_on))
+
+   IF post_close_activity_count > 0 AND days_since_last_post_close_activity <= 30:
+     → DEAL_WON_ACTIVE → Type = "Client actif"
+     → action_type_required = "CUSTOMER_SUCCESS"
+
+   IF post_close_activity_count > 0 AND days_since_last_post_close_activity > 30 AND <= 90:
+     → DEAL_WON_ACTIVE → Type = "Client actif" (less frequent but still active)
+     → action_type_required = "CUSTOMER_SUCCESS"
+
+   IF post_close_activity_count > 0 AND days_since_last_post_close_activity > 90:
+     → DEAL_WON_DORMANT → Type = "Client dormant"
+     → action_type_required = "re_engagement"
+
+   IF post_close_activity_count = 0:
+     → DEAL_WON_DORMANT → Type = "Client dormant"
+     → action_type_required = "re_engagement"
+```
+
+### 🚨 CRITICAL: SCAN ALL ACTIVITIES FOR POST-CLOSE DETECTION
+
+The activities[] array may NOT be sorted by date. You MUST:
+1. Scan ALL activities to count those with recorded_on > deal_closed_date
+2. Find the MAX(recorded_on) among post-close activities
+3. Calculate days since that MAX date, not since deal_closed_date
+
+### ⚠️ COMMON BUG TO AVOID:
+
+❌ WRONG:
+```
+Deal closed: 2025-09-10 (99 days ago)
+activities[0] from 2025-08-27 → "no recent post-close activity"
+→ Classified as DORMANT
+```
+
+✅ CORRECT:
+```
+Deal closed: 2025-09-10 (99 days ago)
+SCAN ALL activities → find activity on 2025-12-16 (2 days ago)
+post_close_activity_count = 21
+days_since_last_post_close = 2
+→ Classified as DEAL_WON_ACTIVE (Client actif)
+```
 
 ### WHY "NURTURING" MATTERS
 
@@ -705,6 +810,141 @@ BEFORE adding a resource to `related_resources_to_offer`:
 - Check `deduplication_context.recently_suggested_resources`
 - If resource.id is in recently_suggested → SKIP and try next best match
 - Note skipped resources in `deduplication_applied.resources_excluded`
+
+====================
+🎯 RESOURCE SPECIFICITY BONUS (V11 - CRITICAL)
+====================
+
+### Problem Addressed:
+Generic resources (e.g., "Quarter Plan video") may score high on broad matches but miss the opportunity to address SPECIFIC, UNIQUE pain points that differentiate the conversation.
+
+### New Scoring Factor: specificity_bonus
+
+Add to match_score calculation:
+
+```
+match_score = keyword_score + pain_score + role_score + format_score + specificity_bonus
+
+WHERE specificity_bonus is calculated as:
+
+specificity_bonus = 0.00 (default)
+
+IF resource addresses a pain point that is:
+  - UNIQUE to this contact (not generic PPM needs)
+  - EXPLICITLY QUOTED in hooks (verbatim from conversation)
+  - SPECIFIC TOOLS MENTIONED (Power BI, Notion, Jira, Excel, etc.)
+THEN specificity_bonus = +0.15
+
+IF resource addresses:
+  - Generic capability (capacity planning, project visibility)
+  - Common need (reporting, dashboards)
+THEN specificity_bonus = +0.00
+```
+
+### Specificity Classification:
+
+| Specificity Level | Bonus | Examples |
+|-------------------|-------|----------|
+| HIGH (+0.15) | Explicit tool names | "dissociation Power BI, Notion, PowerPoint", "intégration Jira 4 équipes Scrum", "outil interne coûteux" |
+| MEDIUM (+0.08) | Quantified context | "40 projets" with context, "équipes Scrum + standard hybride", "5-15 projets tableau" |
+| LOW (+0.00) | Generic needs | "gestion de capacité", "visibilité portefeuille", "planification" |
+
+### Example Application:
+
+```
+Contact: André Mooser
+Hooks detected:
+- hook_001: "dissociation entre Power BI, Notion, PowerPoint" (HIGH SPECIFICITY)
+- hook_002: "gestion de 40 projets" (MEDIUM SPECIFICITY)
+- hook_003: "capacity planning" (LOW SPECIFICITY)
+
+Resource comparison:
+  case_study_tool_consolidation:
+    - base_score: 0.45
+    - specificity_bonus: 0.15 (addresses Power BI/Notion explicitly)
+    - TOTAL: 0.60
+
+  quarter_plan_video:
+    - base_score: 0.50
+    - specificity_bonus: 0.00 (addresses generic capacity planning)
+    - TOTAL: 0.50
+
+RESULT: case_study_tool_consolidation ranks higher due to specificity
+```
+
+### Output Update:
+
+In match_score_breakdown, add specificity_bonus:
+```json
+"match_score_breakdown": {
+  "keyword_overlap": 0.28,
+  "pain_point_alignment": 0.25,
+  "role_fit": 0.15,
+  "format_preference": 0.05,
+  "specificity_bonus": 0.15,
+  "specificity_reason": "Addresses explicit tool names (Power BI, Notion, PowerPoint) mentioned verbatim in hook_001"
+}
+```
+
+====================
+🏆 RESOURCE RANKING TIEBREAKER RULES (V11)
+====================
+
+When two or more resources have similar match_scores (within 0.05 of each other):
+
+### Tiebreaker Priority Order:
+
+1. **SPECIFICITY WINS**
+   - Resource with higher specificity_bonus wins
+   - Rationale: Specific > Generic for re-engagement personalization
+
+2. **RECENCY OF PAIN POINT**
+   - Resource addressing most recently mentioned pain point wins
+   - Check hook_date for connected hooks
+
+3. **RESOURCE TYPE PREFERENCE** (for re-engagement scenarios)
+   - case_study > video > ebook > feature_page > webinar
+   - Rationale: Social proof (case study) more compelling for dormant contacts
+
+4. **PROOF POINTS AVAILABLE**
+   - Resource with concrete proof_points wins
+   - "80% less manual reporting" > "improves efficiency"
+
+5. **CONSUMPTION EFFORT**
+   - Lower effort wins for initial re-engagement
+   - video (8 min) > ebook (24 pages) > webinar (45 min)
+
+### Implementation Logic:
+
+```
+def rank_resources(resources):
+    # Sort by match_score DESC
+    sorted_resources = sort(resources, key=match_score, reverse=True)
+
+    # Check for ties (within 0.05)
+    for i, resource in enumerate(sorted_resources[:-1]):
+        next_resource = sorted_resources[i+1]
+        if abs(resource.match_score - next_resource.match_score) <= 0.05:
+            # Apply tiebreakers in order
+            winner = apply_tiebreakers(resource, next_resource)
+            # Reorder if needed
+
+    return sorted_resources
+```
+
+### Output Documentation:
+
+When tiebreaker applied, document in primary_resource_recommendation:
+```json
+"primary_resource_recommendation": {
+  "resource_id": "case_study_tool_consolidation",
+  "selection_reason": "Tied with quarter_plan_video (0.60 vs 0.58) but selected due to: (1) Higher specificity - addresses explicit tools mentioned (Power BI, Notion), (2) Case study format provides social proof, (3) Has concrete proof point: '80% less manual reporting'",
+  "tiebreaker_applied": true,
+  "tiebreaker_rule": "specificity_wins",
+  "runner_up_resource_id": "quarter_plan_video",
+  "runner_up_score": 0.58
+}
+```
 
 ====================
 STEP 3 – OPPORTUNITY TYPE & STRENGTH

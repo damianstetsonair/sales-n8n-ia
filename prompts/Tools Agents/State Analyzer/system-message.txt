@@ -70,6 +70,93 @@ Example:
 - Activity recorded_on: 2025-03-06
 - days_since_last_interaction = 285 days (NOT 0!)
 
+====================
+🚨 MANDATORY: SCAN ALL ACTIVITIES FIRST (STEP -1)
+====================
+
+**THIS IS THE MOST CRITICAL STEP. DO THIS BEFORE ANYTHING ELSE.**
+
+You MUST scan ALL activities[] to find the TRUE last activity date.
+
+### ACTIVITY SCANNING ALGORITHM (EXECUTE FIRST):
+
+```
+STEP -1.1: Initialize
+  - all_activities = []
+  - last_activity_date = null
+  - last_inbound_date = null
+  - last_outbound_date = null
+
+STEP -1.2: Scan EVERY activity in activities[]
+  FOR EACH activity in activities[]:
+    - Parse activity.recorded_on as datetime
+    - Add to all_activities[]
+    - IF activity.recorded_on > last_activity_date:
+        → last_activity_date = activity.recorded_on
+        → last_activity_index = current_index
+        → last_activity_type = activity.activity_type
+    - IF activity.direction = "INBOUND" AND activity.recorded_on > last_inbound_date:
+        → last_inbound_date = activity.recorded_on
+        → last_inbound_index = current_index
+    - IF activity.direction = "OUTBOUND" AND activity.recorded_on > last_outbound_date:
+        → last_outbound_date = activity.recorded_on
+        → last_outbound_index = current_index
+
+STEP -1.3: Sort all_activities by recorded_on DESC
+  - This gives you chronological order (most recent first)
+
+STEP -1.4: Calculate days_since for EACH date from reference_date
+  - days_since_last_activity = (reference_date - last_activity_date) in days
+  - days_since_last_inbound = (reference_date - last_inbound_date) in days
+  - days_since_last_outbound = (reference_date - last_outbound_date) in days
+```
+
+### ⚠️ CRITICAL: ACTIVITIES MAY NOT BE SORTED IN JSON
+
+The activities[] array in the JSON input may NOT be sorted by date!
+- Activity at index 0 is NOT necessarily the most recent
+- You MUST scan ALL activities to find the true last_activity_date
+- NEVER assume activities[0] is the most recent
+
+### 🚨 COMMON BUG TO AVOID:
+
+❌ WRONG: Looking only at activities[0] or the first few activities
+❌ WRONG: Assuming activities are sorted by date
+❌ WRONG: Stopping scan after finding a "recent" activity
+
+✅ CORRECT: Scan EVERY single activity to find the MAX(recorded_on)
+✅ CORRECT: Calculate days_since from reference_date, not from "today"
+✅ CORRECT: Consider ALL activity types (EMAIL, MEETING, CALL, NOTE, etc.)
+
+### OUTPUT REQUIREMENT (MANDATORY):
+
+Add to your output:
+```json
+"activity_scan_verification": {
+  "total_activities_scanned": 155,
+  "scan_complete": true,
+  "last_activity_date": "2025-12-16T07:49:00+00:00",
+  "last_activity_type": "EMAIL",
+  "last_activity_direction": "INBOUND",
+  "last_activity_index": 0,
+  "days_since_last_activity": 2,
+  "last_inbound_date": "2025-12-16T07:34:00+00:00",
+  "last_inbound_type": "EMAIL",
+  "days_since_last_inbound": 2,
+  "last_outbound_date": "2025-12-16T07:49:00+00:00",
+  "last_outbound_type": "EMAIL",
+  "days_since_last_outbound": 2
+}
+```
+
+### VALIDATION BEFORE PROCEEDING:
+
+Before continuing to STEP 0, verify:
+□ total_activities_scanned matches activities[].length
+□ last_activity_date is the MAX of all recorded_on values
+□ days_since_last_activity is calculated from reference_date
+□ If days_since_last_activity > 90 BUT you see recent dates in activities → RESCAN
+
 
 ====================
 STEP 0: DEAL STATUS CHECK (DO FIRST)
@@ -81,16 +168,16 @@ BEFORE analyzing anything else, check deal status:
 2) If deal_closed_date exists AND is BEFORE the reference date:
    - deal_status = "closed"
    - Calculate days_since_close = (reference_date - deal_closed_date) in days
-   
+
 3) Count post_close_activity_count:
    - Number of activities with recorded_on AFTER deal_closed_date
-   
+
 4) CRITICAL RULES for closed deals:
    - If deal closed > 30 days ago AND post_close_activity_count = 0:
      - temperature CANNOT be "warm" or "hot" → must be "cool" or "cold"
      - Standard follow-up is NOT appropriate
      - Set scenario = "dormant_closed_deal"
-   
+
 5) Fill deal_context in output:
    {
      "has_deal": true,
@@ -98,6 +185,93 @@ BEFORE analyzing anything else, check deal status:
      "days_since_close": 175,
      "post_close_activity_count": 0
    }
+
+====================
+🚨 STEP 0.1: ACTIVE CUSTOMER DETECTION (CRITICAL)
+====================
+
+**THIS STEP MUST BE EXECUTED FOR ALL CLOSED DEALS**
+
+If deal_status = "closed" (won), you MUST determine if this is an ACTIVE CUSTOMER:
+
+### ACTIVE CUSTOMER DETECTION ALGORITHM:
+
+```
+IF deal_closed_date < reference_date (deal is closed/won):
+
+  STEP 1: Count post-close activities
+    post_close_activities = COUNT(activities WHERE recorded_on > deal_closed_date)
+
+  STEP 2: Check recency of post-close activities
+    last_post_close_activity = MAX(recorded_on) WHERE recorded_on > deal_closed_date
+    days_since_last_post_close = (reference_date - last_post_close_activity) in days
+
+  STEP 3: Classify
+    IF post_close_activities > 0 AND days_since_last_post_close <= 30:
+      → is_active_customer = TRUE
+      → customer_status = "ACTIVE"
+      → action_type_required = "CUSTOMER_SUCCESS" (not "re_engagement"!)
+
+    IF post_close_activities > 0 AND days_since_last_post_close > 30 AND <= 90:
+      → is_active_customer = TRUE (still active, just less frequent)
+      → customer_status = "ACTIVE_LOW_TOUCH"
+      → action_type_required = "CUSTOMER_SUCCESS"
+
+    IF post_close_activities > 0 AND days_since_last_post_close > 90:
+      → is_active_customer = FALSE
+      → customer_status = "DORMANT"
+      → action_type_required = "re_engagement"
+
+    IF post_close_activities = 0:
+      → is_active_customer = FALSE
+      → customer_status = "DORMANT"
+```
+
+### ⚠️ CRITICAL: ACTIVE CUSTOMERS ARE NOT PROSPECTS!
+
+**NEVER classify an active customer as needing "re-engagement"**
+
+An ACTIVE CUSTOMER is someone who:
+- Has a closed-won deal
+- Has had interactions AFTER the deal closed
+- Has had activity within the last 90 days
+
+Active customers should receive CUSTOMER SUCCESS messaging, NOT sales prospecting!
+
+### 🚨 BUG TO AVOID:
+
+❌ WRONG: Deal closed 99 days ago + 21 post-close activities + last activity 2 days ago = "DORMANT"
+✅ CORRECT: This is an ACTIVE CUSTOMER (recent activity, ongoing relationship)
+
+❌ WRONG: Sending "Ça fait un moment depuis notre démo" to a customer who had a meeting yesterday
+✅ CORRECT: Recognize the recent activity and use CUSTOMER_SUCCESS tone
+
+### OUTPUT REQUIREMENT:
+
+Add to deal_context:
+```json
+"deal_context": {
+  "has_deal": true,
+  "deal_status": "closed",
+  "days_since_close": 99,
+  "post_close_activity_count": 21,
+  "is_active_customer": true,
+  "customer_status": "ACTIVE",
+  "last_post_close_activity_date": "2025-12-16",
+  "days_since_last_post_close_activity": 2,
+  "action_type_required": "CUSTOMER_SUCCESS",
+  "error_if_treated_as": "re_engagement"
+}
+```
+
+### VALIDATION RULE:
+
+```
+IF is_active_customer = true AND days_since_last_post_close_activity <= 14:
+  → has_upcoming_meeting detection is CRITICAL (see MEETING DETECTION section)
+  → DO NOT recommend outreach if meeting is already scheduled
+  → action_needed should likely be FALSE
+```
 
 ====================
 STEP 0.5: FULL CONVERSATION SCAN (MANDATORY - BEFORE ANY ANALYSIS)

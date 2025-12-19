@@ -63,6 +63,101 @@ WAVE 3: SYNTHESIS
 └── Final recommendation with channel, content, timing
 ```
 
+## 🚨 V12.0 Active Customer Detection (CRITICAL FIX)
+
+### Bug Fixed in V12.0
+
+**The Problem:**
+The system was not scanning ALL activities correctly. It looked at only the first few activities in the array and calculated `days_since_last_activity` incorrectly, leading to:
+- Active customers classified as "dormant" (113 days silence when real silence was 2 days)
+- Recent meetings ignored
+- Re-engagement messages sent to customers with meetings scheduled for tomorrow
+
+**Real Example of the Bug:**
+```
+What the system thought:
+  - "113 días de silencio"
+  - "Deal won pero dormant"
+  - Generated: "Ça fait un moment depuis notre démo de fin août..."
+
+Reality (scanning ALL activities):
+  - 16/12 → André RESPONDE pidiendo mover reunión a viernes 14h
+  - 16/12 → Bertran CONFIRMA viernes 14h
+  - 17/12 → MEETING "André x Bertran - Weekly"
+  - Last activity was 2 days ago, NOT 113 days ago
+```
+
+### The Fix: Mandatory Activity Scan (STEP -1)
+
+All agents now MUST execute this BEFORE any analysis:
+
+```
+STEP -1: SCAN ALL ACTIVITIES
+  FOR EACH activity in activities[]:
+    - Parse activity.recorded_on
+    - Track MAX(recorded_on) = true last_activity_date
+
+  Calculate: days_since = (reference_date - last_activity_date)
+
+  ⚠️ CRITICAL: activities[] may NOT be sorted by date!
+  ⚠️ activities[0] is NOT necessarily the most recent
+```
+
+### Active Customer Detection Rules
+
+| Condition | Classification | Action Type |
+|-----------|---------------|-------------|
+| Deal closed + activity within 30 days | DEAL_WON_ACTIVE | CUSTOMER_SUCCESS |
+| Deal closed + activity 31-90 days | DEAL_WON_ACTIVE | CUSTOMER_SUCCESS |
+| Deal closed + activity > 90 days | DEAL_WON_DORMANT | re_engagement |
+| Deal closed + no post-close activity | DEAL_WON_DORMANT | re_engagement |
+
+### Critical Validation Checks
+
+```
+IF days_since_last_activity <= 14:
+  → NEVER classify as "dormant"
+  → NEVER use re-engagement templates
+  → Check for upcoming meetings FIRST
+
+IF has_upcoming_meeting = true:
+  → action = "wait"
+  → DO NOT generate outreach
+  → wait_type.type = "meeting_scheduled"
+```
+
+### Forbidden Patterns for Active Customers
+
+These phrases are **FORBIDDEN** for contacts with activity in last 30 days:
+- ❌ "Ça fait un moment depuis..."
+- ❌ "Cela fait plusieurs mois..."
+- ❌ "Depuis notre démo de..."
+- ❌ "Vous êtes toujours sur le sujet?"
+
+### New Output Requirements
+
+All agents must include activity scan verification:
+```json
+"activity_scan_verification": {
+  "total_activities_scanned": 155,
+  "scan_complete": true,
+  "last_activity_date": "2025-12-16",
+  "days_since_last_activity": 2
+}
+```
+
+Synthesis must include active customer check:
+```json
+"active_customer_check": {
+  "is_active_customer": true,
+  "days_since_last_activity": 2,
+  "has_upcoming_meeting": true,
+  "action_override": "wait"
+}
+```
+
+---
+
 ## V10.0 Decision Pipeline Stages
 
 The multi-agent system follows a structured decision pipeline inspired by V10.0 algorithm:
@@ -630,3 +725,157 @@ Cada recurso recibe un match_score basado en 4 factores:
 - Verify match_score >= 0.35 for all resources
 - Verify primary_resource is in related_resources_to_offer
 - Check resource_gap_detected has alternative approach if gap_exists
+
+## 👥 Stakeholder Mention System (v11)
+
+### Regla: preserve_stakeholder_mentions
+Cuando hay múltiples stakeholders en stakeholder_map, los mensajes de re-engagement DEBEN mencionarlos:
+- "depuis notre démo avec Kasim sur vos enjeux PPM"
+- "Depuis notre échange avec Kasim et toi sur la gestion de vos 40 projets"
+
+### Multi-threading Opportunity
+Si stakeholder_map.multi_threading_opportunity.exists = true:
+- En step 2-3 de secuencia: "N'hésite pas à transférer à [name] si c'est plus pertinent de son côté"
+
+### Excepciones (NO mencionar stakeholders):
+- Stakeholder mencionado en contexto negativo
+- Stakeholder dejó la empresa
+- Rol subordinado/administrativo (asistente)
+
+### Output tracking:
+```json
+"stakeholder_handling": {
+  "other_stakeholders_available": true,
+  "stakeholders_mentioned_in_message": ["Kasim"],
+  "multi_threading_enabled": true
+}
+```
+
+## 🎯 Resource Specificity System (v11)
+
+### Specificity Bonus
+Los recursos que abordan pain points ESPECÍFICOS reciben bonus en el scoring:
+
+| Nivel | Bonus | Ejemplos |
+|-------|-------|----------|
+| HIGH | +0.15 | "Power BI, Notion, PowerPoint", "intégration Jira" |
+| MEDIUM | +0.08 | "40 projets" con contexto, "Scrum + standard hybride" |
+| LOW | +0.00 | "gestion de capacité", "visibilité portefeuille" |
+
+### Tiebreaker Rules (cuando scores similares ±0.05)
+1. **Specificity wins** - Recurso con mayor specificity_bonus
+2. **Recency** - Pain point más reciente
+3. **Type preference** - case_study > video > ebook
+4. **Proof points** - Recursos con datos concretos
+5. **Consumption effort** - Menor esfuerzo primero
+
+## 📡 Channel Availability Verification (v11)
+
+### Regla Crítica
+El Channel Selector DEBE verificar disponibilidad de canal ANTES de evaluar suitability.
+
+### Verification Matrix
+
+| Channel | Campo Requerido | Regla |
+|---------|-----------------|-------|
+| EMAIL | `contact_info.email` | Campo DEBE existir Y tener valor |
+| LINKEDIN | `contact_info.linkedin_url` | Campo DEBE existir Y tener valor |
+| PHONE | `contact_info.phone` | Campo DEBE existir Y tener valor |
+| WHATSAPP | `contact_info.whatsapp_number` | Campo DEBE existir Y tener valor |
+
+### availability_check Object (Mandatory)
+Cada canal en `per_channel_analysis` DEBE incluir:
+
+```json
+"availability_check": {
+  "field_checked": "contact_info.email",
+  "field_exists": true,
+  "field_value": "marie@company.com",
+  "available": true
+}
+```
+
+Si no disponible:
+```json
+"availability_check": {
+  "field_checked": "contact_info.email",
+  "field_exists": false,
+  "field_value": null,
+  "available": false,
+  "reason": "email field not present in contact_info"
+}
+```
+
+### Reglas Críticas
+1. **NUNCA asumir disponibilidad** - siempre verificar contra contact_info
+2. **Existencia de campo ≠ existencia de dato** - verificar ambos
+3. **Activities NO otorgan disponibilidad** - historial de EMAIL no significa que existe contact_info.email
+4. **Si no disponible, suitability_score = 0.0**
+5. **Primary channel DEBE estar disponible**
+
+### Email en Notes (Informativo)
+Si email aparece en activities[].metadata.body pero NO en contact_info.email:
+- `available = false` (sigue siendo false)
+- Agregar a `negative_signals`: "email_found_in_notes_but_not_contact_info"
+- NO hace el canal disponible - solo informativo para CRM hygiene
+
+### Bug Fix Context (v11.1)
+Este sistema se agregó para corregir un bug donde el Channel Selector seleccionaba EMAIL como primary channel cuando el campo `contact_info.email` no existía, solo porque había actividades de tipo EMAIL en el historial.
+
+## 🔗 LinkedIn URL Strategy (v11)
+
+### Regla Principal
+En mensajes de re-engagement en LinkedIn con relationship_depth < 7.0:
+- **NO incluir URLs directas** (filtrado de LinkedIn + se siente transaccional)
+- **USAR patrón "offer to send"**: "Je te l'envoie si ça t'intéresse"
+
+### URL Escalation en Secuencias LinkedIn
+
+| Step | Strategy | Pattern |
+|------|----------|---------|
+| 1 | offer_to_send | "Je te l'envoie si ça t'intéresse" |
+| 2 | include_url | "Voici le lien direct : [URL]" |
+| 3 | reference_without_url | "Ressources dispo sur notre site" |
+
+### Decisión Logic
+```
+IF channel = "LINKEDIN":
+  IF action_type IN ["re_engagement", "check_in"] AND relationship_depth < 7.0:
+    USE offer_to_send
+  ELIF relationship_depth >= 7.0:
+    MAY include URL
+```
+
+### Output tracking:
+```json
+"linkedin_url_handling": {
+  "strategy_used": "offer_to_send",
+  "url_included_in_message": false,
+  "url_to_send_on_response": "https://...",
+  "fallback_if_no_response": "Include URL in step 2"
+}
+```
+
+## 📝 Ejemplo de Mensaje Final Esperado (V11)
+
+```
+Bonjour André,
+
+Cela fait plusieurs mois depuis notre démo avec Kasim sur la gestion de vos 40 projets.
+
+Je pensais à vous en voyant un case study qu'on a publié sur la consolidation d'outils - exactement le sujet Power BI/Notion/PowerPoint dont on avait parlé.
+
+Comment ça a évolué de votre côté ? Vous avez pu avancer sur la visualisation capacitaire ?
+
+Je te l'envoie si ça t'intéresse - sinon pas de souci, dis-le moi.
+
+Bertran
+```
+
+**Checklist V11:**
+- ✅ Kasim mencionado (stakeholder preservado)
+- ✅ Case study de consolidación (recurso específico vs genérico)
+- ✅ Pain point específico (Power BI/Notion/PowerPoint)
+- ✅ No hay URL directa (offer to send para LinkedIn)
+- ✅ Easy exit incluido
+- ✅ Value bridge ("Je pensais à vous en voyant...")
