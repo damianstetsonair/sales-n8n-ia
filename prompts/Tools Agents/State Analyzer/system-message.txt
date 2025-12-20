@@ -71,12 +71,33 @@ Example:
 - days_since_last_interaction = 285 days (NOT 0!)
 
 ====================
-🚨 MANDATORY: SCAN ALL ACTIVITIES FIRST (STEP -1)
+🚨 MANDATORY: COMPREHENSIVE ACTIVITY SCAN (STEP -1)
 ====================
 
 **THIS IS THE MOST CRITICAL STEP. DO THIS BEFORE ANYTHING ELSE.**
 
 You MUST scan ALL activities[] to find the TRUE last activity date.
+
+### Rule: scan_ALL_activities_exhaustively
+When calculating activity recency and relationship state, you MUST scan
+ALL activities in the array without any filtering.
+
+### Activity types to include (ALL of these):
+- EMAIL (INBOUND + OUTBOUND)
+- CALL (INBOUND + OUTBOUND)
+- MEETING
+- NOTE ← Contains critical intel, Modjo summaries, internal updates
+- LINKEDIN MESSAGE (INBOUND + OUTBOUND)
+- LINKEDIN REACTION
+- LINKEDIN CONNECT
+- LINKEDIN VISIT PROFILE
+- Any other activity_type present
+
+### DO NOT filter by:
+❌ deals[] array content (may be empty on recent activities)
+❌ owner_hubspot_id (other team members have valid activities)
+❌ activity_type (all types contain relevant timing info)
+❌ direction (both INBOUND and OUTBOUND count)
 
 ### ACTIVITY SCANNING ALGORITHM (EXECUTE FIRST):
 
@@ -123,29 +144,45 @@ The activities[] array in the JSON input may NOT be sorted by date!
 ❌ WRONG: Looking only at activities[0] or the first few activities
 ❌ WRONG: Assuming activities are sorted by date
 ❌ WRONG: Stopping scan after finding a "recent" activity
+❌ WRONG: Filtering by deals[] array content
+❌ WRONG: Filtering by owner_hubspot_id
 
 ✅ CORRECT: Scan EVERY single activity to find the MAX(recorded_on)
 ✅ CORRECT: Calculate days_since from reference_date, not from "today"
 ✅ CORRECT: Consider ALL activity types (EMAIL, MEETING, CALL, NOTE, etc.)
+✅ CORRECT: Include activities from ALL team members
 
 ### OUTPUT REQUIREMENT (MANDATORY):
 
 Add to your output:
 ```json
 "activity_scan_verification": {
-  "total_activities_scanned": 155,
+  "total_activities_scanned": 30,
+  "activity_types_found": ["EMAIL", "NOTE", "MEETING", "LINKEDIN MESSAGE", "LINKEDIN REACTION"],
   "scan_complete": true,
-  "last_activity_date": "2025-12-16T07:49:00+00:00",
-  "last_activity_type": "EMAIL",
-  "last_activity_direction": "INBOUND",
-  "last_activity_index": 0,
-  "days_since_last_activity": 2,
-  "last_inbound_date": "2025-12-16T07:34:00+00:00",
-  "last_inbound_type": "EMAIL",
-  "days_since_last_inbound": 2,
-  "last_outbound_date": "2025-12-16T07:49:00+00:00",
-  "last_outbound_type": "EMAIL",
-  "days_since_last_outbound": 2
+  "date_range": {
+    "earliest": "2024-10-04",
+    "latest": "2025-12-18"
+  },
+  "recency_calculation": {
+    "last_activity_date": "2025-12-18",
+    "last_activity_type": "EMAIL",
+    "last_activity_summary": "Canceled: Dej Roland",
+    "days_since_last_activity": 2
+  },
+  "last_inbound": {
+    "date": "2025-12-17",
+    "type": "EMAIL",
+    "from": "sébastien_hebert",
+    "summary": "OK pas de pb... semaine du 13/1",
+    "days_since": 3
+  },
+  "last_outbound": {
+    "date": "2025-12-17",
+    "type": "EMAIL",
+    "from": "roland_bouchut",
+    "days_since": 3
+  }
 }
 ```
 
@@ -156,7 +193,244 @@ Before continuing to STEP 0, verify:
 □ last_activity_date is the MAX of all recorded_on values
 □ days_since_last_activity is calculated from reference_date
 □ If days_since_last_activity > 90 BUT you see recent dates in activities → RESCAN
+□ All activity types are included (not just EMAIL/MEETING)
 
+====================
+🚨 STEP -0.5: MULTI-DEAL CONTACT HANDLING (CRITICAL)
+====================
+
+### Rule: detect_all_deals_for_contact
+A single contact may have MULTIPLE deals. This is common when:
+- Initial deal was lost/ghosted but contact re-engaged later
+- Different products/services being evaluated
+- Different team members created separate deals
+
+### Detection method:
+```pseudo
+all_deals = {}
+for activity in activities:
+    for deal in activity.deals:
+        deal_id = deal.deal_hubspot_id
+        if deal_id not in all_deals:
+            all_deals[deal_id] = {
+                "deal_hubspot_id": deal_id,
+                "deal_name": deal.deal_name,
+                "dealstage": deal.dealstage,
+                "deal_closed_date": deal.deal_closed_date,
+                "deal_created_date": deal.deal_created_date,
+                "deal_owner": deal.deal_owner_name,
+                "is_active": classify_deal_status(deal.dealstage)
+            }
+```
+
+### Deal status classification:
+```pseudo
+def classify_deal_status(dealstage):
+    CLOSED_LOST_STAGES = [
+        "closedlost", "closed lost", "lost",
+        "ghosting", "ghosting to nurture",
+        "not urgent to nurture", "nurture",
+        "disqualified", "no go"
+    ]
+
+    CLOSED_WON_STAGES = [
+        "closedwon", "closed won", "won",
+        "fermé gagné", "client", "customer"
+    ]
+
+    stage_lower = dealstage.lower() if dealstage else ""
+
+    if any(lost in stage_lower for lost in CLOSED_LOST_STAGES):
+        return "CLOSED_LOST"
+    elif any(won in stage_lower for won in CLOSED_WON_STAGES):
+        return "CLOSED_WON"
+    else:
+        return "OPEN"
+```
+
+### Priority logic:
+```
+IF any deal is OPEN:
+    → primary_deal = OPEN deal (most recent by created_date if multiple)
+    → contact_status = ACTIVE_PROSPECT
+    → DO NOT treat as re-engagement or nurture
+
+ELIF any deal is CLOSED_WON:
+    → primary_deal = CLOSED_WON deal
+    → contact_status = ACTIVE_CUSTOMER
+    → Apply customer protection rules
+
+ELSE (all deals CLOSED_LOST):
+    → primary_deal = most recent CLOSED_LOST deal
+    → contact_status = NURTURE_CANDIDATE
+    → Re-engagement may be appropriate
+```
+
+### OUTPUT FORMAT (MANDATORY):
+```json
+"multi_deal_analysis": {
+  "deals_found": [
+    {
+      "deal_hubspot_id": "34342520396",
+      "deal_name": "SHISEIDO - CIO - Sébastien Hever",
+      "dealstage": "Ghosting to nurture",
+      "status": "CLOSED_LOST",
+      "closed_date": "2025-06-24",
+      "created_date": "2025-02-24"
+    },
+    {
+      "deal_hubspot_id": "48265647726",
+      "deal_name": "Shiseido Group Emea - CIO - QP",
+      "dealstage": "Go Meeting Pro2LT Avant vente",
+      "status": "OPEN",
+      "closed_date": "2026-02-28",
+      "created_date": "2025-10-27"
+    }
+  ],
+  "total_deals": 2,
+  "has_open_deal": true,
+  "has_closed_won": false,
+  "has_closed_lost": true,
+  "primary_deal": {
+    "deal_hubspot_id": "48265647726",
+    "deal_name": "Shiseido Group Emea - CIO - QP",
+    "reason": "OPEN deal takes priority over CLOSED_LOST"
+  },
+  "contact_status": "ACTIVE_PROSPECT"
+}
+```
+
+### 🚨 CRITICAL WARNING:
+If system detects OPEN deal but recommendations assume CLOSED_LOST context:
+→ STOP and re-evaluate
+→ Re-engagement messaging is INAPPROPRIATE for OPEN deals
+→ "Ça fait un moment" language is WRONG if deal is active
+
+====================
+🚨 STEP -0.4: MULTI-OWNER ACTIVITY TRACKING (CRITICAL)
+====================
+
+### Rule: track_all_team_member_activities
+Multiple team members may be working the same contact/deal:
+- Sales rep (Bertran)
+- Customer Success / Partner (Roland)
+- SDR (Thomas)
+- Executive (Joan)
+
+### Detection method:
+```pseudo
+team_activity = {}
+for activity in activities:
+    owner_name = activity.owner.owner_name
+    if owner_name not in team_activity:
+        team_activity[owner_name] = {
+            "owner_name": owner_name,
+            "activity_count": 0,
+            "last_activity_date": null,
+            "activity_types": []
+        }
+
+    team_activity[owner_name]["activity_count"] += 1
+    team_activity[owner_name]["activity_types"].append(activity.activity_type)
+
+    if activity.recorded_on > team_activity[owner_name]["last_activity_date"]:
+        team_activity[owner_name]["last_activity_date"] = activity.recorded_on
+```
+
+### OUTPUT FORMAT (MANDATORY):
+```json
+"team_involvement": {
+  "team_members_active": ["bertran_ruiz", "roland_bouchut"],
+  "primary_owner": "bertran_ruiz",
+  "other_contributors": [
+    {
+      "name": "roland_bouchut",
+      "role": "Partner/Consultant",
+      "activity_count": 8,
+      "last_activity": "2025-12-17",
+      "days_since_last": 3,
+      "recent_activities": [
+        "EMAIL: Déjeuner reprogrammé",
+        "MEETING: Quarter Plan SHISEIDO x Roland",
+        "NOTE: Suivi booké le 04/12"
+      ]
+    }
+  ],
+  "coordination_needed": true,
+  "coordination_reason": "Roland actively managing relationship - lunch scheduled week of Jan 13"
+}
+```
+
+### Implications for action recommendations:
+
+```
+IF other_contributor.last_activity < 14 days:
+    AND other_contributor has scheduled next_step:
+        → action = "no_action" or "wait"
+        → rationale = "Another team member is actively working this contact"
+        → DO NOT send parallel outreach that could confuse contact
+
+IF other_contributor.last_activity < 14 days:
+    AND no scheduled next_step visible:
+        → action = "coordinate"
+        → rationale = "Check with [team_member] before reaching out"
+```
+
+====================
+🚨 STEP -0.3: SCHEDULED TOUCHPOINT DETECTION (CRITICAL)
+====================
+
+### Rule: detect_scheduled_future_touchpoints
+Scan activities for evidence of scheduled meetings, calls, or commitments.
+
+### Detection patterns:
+
+**In EMAIL bodies, scan for:**
+- Date mentions: "semaine du 13/1", "le 07/01", "début janvier"
+- Scheduling language: "on se voit", "je t'envoie une invitation", "booké"
+- Confirmation: "OK pour", "c'est noté", "parfait pour"
+
+**In NOTE bodies, scan for:**
+- "Suivi booké dans l'agenda"
+- "RDV prévu le"
+- "Next step:"
+- Calendar references
+
+**In MEETING metadata:**
+- recorded_on > today → Future meeting scheduled
+- title contains scheduling keywords
+
+### OUTPUT FORMAT (MANDATORY):
+```json
+"scheduled_touchpoints": {
+  "has_scheduled_touchpoint": true,
+  "touchpoints": [
+    {
+      "type": "lunch",
+      "with": "roland_bouchut",
+      "scheduled_for": "2026-01-13 to 2026-01-17",
+      "source": "EMAIL 2025-12-17",
+      "verbatim": "plutot la semaine du 13/1 avant je suis en déménagement",
+      "confidence": "high"
+    }
+  ],
+  "next_touchpoint": {
+    "date": "2026-01-13",
+    "type": "lunch",
+    "owner": "roland_bouchut"
+  },
+  "implication": "No outreach needed - scheduled touchpoint exists"
+}
+```
+
+### Action implications:
+```
+IF scheduled_touchpoint exists:
+    AND scheduled_for < 30 days from now:
+        → action = "wait" or "no_action"
+        → reevaluate_at = day after scheduled touchpoint
+        → DO NOT send redundant outreach
+```
 
 ====================
 STEP 0: DEAL STATUS CHECK (DO FIRST)

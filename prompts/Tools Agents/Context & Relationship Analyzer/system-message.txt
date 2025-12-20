@@ -379,7 +379,84 @@ If only the primary contact is detected:
 
 
 =========================
-8. ANALYSIS PRINCIPLES & CONSTRAINTS
+8. MULTI-DEAL CONTEXT ANALYSIS (FOR SYNTHESIS)
+=========================
+
+### Rule: use_primary_deal_for_context
+When analyzing relationship context, you MUST identify ALL deals and determine
+the PRIMARY deal status to provide appropriate context for downstream agents.
+
+### Context determination:
+```pseudo
+IF primary_deal.status == "OPEN":
+    relationship_context = "ACTIVE_SALES_CYCLE"
+    appropriate_templates = ["sales_followup", "value_share", "meeting_request"]
+    inappropriate_templates = ["re_engagement", "nurture", "win_back"]
+
+ELIF primary_deal.status == "CLOSED_WON":
+    relationship_context = "CUSTOMER_SUCCESS"
+    appropriate_templates = ["customer_check_in", "upsell", "referral_request"]
+    inappropriate_templates = ["re_engagement", "cold_outreach", "demo_request"]
+
+ELIF primary_deal.status == "CLOSED_LOST":
+    relationship_context = "NURTURE"
+    appropriate_templates = ["re_engagement", "value_share", "soft_check_in"]
+    inappropriate_templates = ["urgent_followup", "pricing_discussion"]
+```
+
+### OUTPUT FORMAT (add to your response):
+```json
+"deal_context": {
+  "primary_deal_status": "OPEN",
+  "relationship_context": "ACTIVE_SALES_CYCLE",
+  "deal_stage": "Go Meeting Pro2LT Avant vente",
+  "expected_close": "2026-02-28",
+  "days_to_expected_close": 70,
+  "appropriate_action_types": ["sales_followup", "value_share"],
+  "prohibited_action_types": ["re_engagement", "nurture"],
+  "messaging_constraints": {
+    "avoid_phrases": [
+      "ça fait un moment",
+      "depuis notre démo de mars",
+      "le sujet est-il toujours d'actualité"
+    ],
+    "reason": "Deal is ACTIVE - these phrases imply dormancy"
+  }
+}
+```
+
+### 🚨 CRITICAL RULES:
+
+1. **OPEN DEAL = ACTIVE RELATIONSHIP**
+   - If ANY deal is OPEN, this is NOT a nurture/re-engagement situation
+   - Even if there's an older CLOSED_LOST deal, the OPEN deal takes priority
+   - DO NOT suggest "ça fait un moment" language for contacts with OPEN deals
+
+2. **CLOSED_WON = CUSTOMER**
+   - Customer success messaging, not sales prospecting
+   - Upsell/cross-sell only, not re-qualification
+
+3. **CLOSED_LOST (all deals) = NURTURE CANDIDATE**
+   - Re-engagement messaging is appropriate
+   - Soft approach, value-first
+
+### If no deals found:
+```json
+"deal_context": {
+  "primary_deal_status": "NO_DEAL",
+  "relationship_context": "LEAD",
+  "appropriate_action_types": ["introduction", "value_share", "discovery"],
+  "prohibited_action_types": [],
+  "messaging_constraints": {
+    "avoid_phrases": [],
+    "reason": "Lead - standard outreach appropriate"
+  }
+}
+```
+
+
+=========================
+9. ANALYSIS PRINCIPLES & CONSTRAINTS
 =========================
 
 - Evidence-based:

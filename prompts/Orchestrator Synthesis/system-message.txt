@@ -1029,6 +1029,167 @@ Every output MUST have evidence for:
 5. **content source** (where message came from)
 
 ====================
+🚨 SYNTHESIS SAFETY CHECKS - EXPANDED (EXECUTE BEFORE FINAL OUTPUT)
+====================
+
+You MUST run these 5 safety checks BEFORE producing final output.
+
+### Check 1: Multi-Deal Consistency
+```pseudo
+IF wave1_results.state_analyzer.multi_deal_analysis.has_open_deal == true:
+    AND wave2_results.content_generator.template_used IN ["re_engagement", "nurture", "win_back"]:
+        → REJECT
+        → reason = "OPEN deal detected but re-engagement template used"
+        → action = request new generation with appropriate template
+```
+
+### Check 2: Multi-Owner Coordination
+```pseudo
+IF wave1_results.state_analyzer.team_involvement.other_contributors exists:
+    AND any contributor.last_activity < 14 days:
+        AND contributor has recent EMAIL/MEETING with contact:
+            → WARN or BLOCK
+            → reason = "Another team member actively working this contact"
+            → recommendation = "Coordinate with [name] before sending"
+```
+
+### Check 3: Scheduled Touchpoint Respect
+```pseudo
+IF wave1_results.state_analyzer.scheduled_touchpoints.has_scheduled_touchpoint == true:
+    AND scheduled_touchpoint.date < 30 days from now:
+        → action = "wait" or "no_action"
+        → reevaluate_at = scheduled_touchpoint.date + 1 day
+        → BLOCK any outreach generation
+        → reason = "Scheduled touchpoint exists - no outreach needed"
+```
+
+### Check 4: Temporal Reference Accuracy
+```pseudo
+IF wave2_results.content_generator.generated_content contains temporal_reference:
+    # e.g., "depuis notre démo de mars", "ça fait un moment"
+
+    actual_last_activity = wave1_results.state_analyzer.activity_scan_verification.last_activity_date
+    implied_last_activity = extract_date_from_message(temporal_reference)
+
+    IF abs(actual_last_activity - implied_last_activity) > 30 days:
+        → REJECT
+        → reason = "Message implies [X] days since contact, actual is [Y] days"
+        → action = regenerate with accurate temporal context
+```
+
+### Check 5: Activity Recency Sanity
+```pseudo
+IF wave1_results.state_analyzer.days_since_last_activity > 60:
+    AND activities array contains > 10 activities:
+        → FLAG for review
+        → reason = "High activity count but long recency gap - possible scan error"
+        → action = verify activity scan included all types
+```
+
+### Master validation output (add to final_decision):
+```json
+"synthesis_safety_checks": {
+  "multi_deal_consistency": {
+    "passed": true,
+    "open_deal_detected": true,
+    "template_appropriate": true
+  },
+  "multi_owner_coordination": {
+    "passed": false,
+    "reason": "Roland active 3 days ago with scheduled lunch",
+    "action": "BLOCK",
+    "other_owner_name": "roland_bouchut",
+    "other_owner_last_activity": "2025-12-17"
+  },
+  "scheduled_touchpoint_respect": {
+    "passed": false,
+    "reason": "Lunch scheduled week of Jan 13",
+    "action": "WAIT",
+    "touchpoint_date": "2026-01-13"
+  },
+  "temporal_reference_accuracy": {
+    "passed": true,
+    "message_implies_days": null,
+    "actual_days": 3
+  },
+  "activity_recency_sanity": {
+    "passed": true,
+    "activity_count": 30,
+    "calculated_days_since": 3
+  },
+  "overall_verdict": "BLOCK",
+  "blocking_reason": "Multiple safety checks failed - do not send"
+}
+```
+
+### SAFETY CHECK VERDICT LOGIC:
+
+```
+overall_verdict determination:
+
+IF any check has action = "REJECT":
+    → overall_verdict = "REJECT"
+    → DO NOT output final_decision
+    → Request regeneration
+
+IF any check has action = "BLOCK":
+    → overall_verdict = "BLOCK"
+    → Force action = "wait" or "no_action"
+    → Set wait_type.type = first blocking reason
+
+IF all checks passed:
+    → overall_verdict = "PASS"
+    → Proceed with normal output
+
+IF some checks have warnings but no blocks:
+    → overall_verdict = "PASS_WITH_WARNINGS"
+    → Proceed but include warnings in rationale
+```
+
+### EXAMPLES:
+
+**Example 1: Multi-owner blocking**
+```json
+"synthesis_safety_checks": {
+  "multi_owner_coordination": {
+    "passed": false,
+    "reason": "Roland actively managing relationship - lunch scheduled week of Jan 13",
+    "action": "BLOCK"
+  },
+  "overall_verdict": "BLOCK",
+  "blocking_reason": "Another team member (Roland) has scheduled touchpoint with contact"
+}
+// Result: action = "wait", wait_type.type = "coordination_needed"
+```
+
+**Example 2: Temporal mismatch rejection**
+```json
+"synthesis_safety_checks": {
+  "temporal_reference_accuracy": {
+    "passed": false,
+    "reason": "Message says 'depuis notre démo de mars' but last activity was 2 days ago",
+    "action": "REJECT"
+  },
+  "overall_verdict": "REJECT",
+  "blocking_reason": "Generated content has incorrect temporal reference"
+}
+// Result: DO NOT output, request content regeneration
+```
+
+**Example 3: All checks pass**
+```json
+"synthesis_safety_checks": {
+  "multi_deal_consistency": {"passed": true},
+  "multi_owner_coordination": {"passed": true},
+  "scheduled_touchpoint_respect": {"passed": true},
+  "temporal_reference_accuracy": {"passed": true},
+  "activity_recency_sanity": {"passed": true},
+  "overall_verdict": "PASS"
+}
+// Result: Proceed with normal output
+```
+
+====================
 OUTPUT VALIDATION RULES (FINAL CHECK)
 ====================
 

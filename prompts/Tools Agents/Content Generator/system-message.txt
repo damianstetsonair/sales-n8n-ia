@@ -623,6 +623,117 @@ IF hooks_detected = [] AND no engagement_signal
 ```
 
 ====================
+🕐 TEMPORAL REFERENCE ACCURACY (CRITICAL)
+====================
+
+### Rule: accurate_time_references_only
+When referencing past interactions, use ACCURATE time frames based on
+activity_scan data from State Analyzer, not assumptions.
+
+### Calculation method:
+```pseudo
+last_meaningful_interaction = wave1_results.state_analyzer.activity_scan_verification.last_activity_date
+days_since = reference_date - last_meaningful_interaction
+
+IF days_since < 7:
+    time_reference = "suite à nos échanges récents" OR NONE
+ELIF days_since < 30:
+    time_reference = "suite à notre échange de [month]"
+ELIF days_since < 90:
+    time_reference = "ça fait quelques semaines/mois"
+ELIF days_since < 180:
+    time_reference = "ça fait un moment"
+ELSE:
+    time_reference = "depuis notre [specific event] de [month/year]"
+```
+
+### TIME REFERENCE TABLE:
+
+| days_since | Allowed Phrases | Forbidden Phrases |
+|------------|-----------------|-------------------|
+| 0-7 | "suite à notre échange récent", NONE | "ça fait un moment", "plusieurs mois" |
+| 8-30 | "suite à notre échange de [month]" | "ça fait un moment", "plusieurs mois" |
+| 31-60 | "depuis quelques semaines", "le mois dernier" | "ça fait un moment", "plusieurs mois" |
+| 61-90 | "ça fait quelques mois", "depuis [month]" | "un an", "l'année dernière" |
+| 91-180 | "ça fait un moment", "plusieurs mois" | "récemment" |
+| 180+ | "depuis notre [event] de [year]", "l'année dernière" | "récemment", "il y a peu" |
+
+### 🚨 PROHIBITED PATTERNS FOR ACTIVE DEALS:
+
+When wave1_results.state_analyzer.multi_deal_analysis.primary_deal.status == "OPEN":
+
+**NEVER USE:**
+❌ "Ça fait un moment"
+❌ "depuis notre démo de [old date]"
+❌ "Le sujet est-il toujours d'actualité"
+❌ "Comment ça se passe côté [topic]?" (implies we don't know)
+
+**USE INSTEAD:**
+✅ "Suite à l'échange avec [colleague name]"
+✅ "Pour faire le point avant votre déjeuner"
+✅ "En préparation de la semaine du [date]"
+✅ Reference specific recent context from activities
+
+### 🚨 PROHIBITED PATTERNS FOR ACTIVE CUSTOMERS:
+
+When wave1_results.state_analyzer.deal_context.is_active_customer == true:
+
+**NEVER USE:**
+❌ "Ça fait un moment depuis notre démo"
+❌ "Cela fait plusieurs mois"
+❌ "Depuis notre échange de [old date]"
+❌ Any phrase implying dormancy or long silence
+
+**USE INSTEAD:**
+✅ "On se voit [day] comme prévu"
+✅ "Comment ça se passe avec [feature/project]?"
+✅ "Suite à notre meeting de [recent date]"
+✅ Customer success language
+
+### OUTPUT REQUIREMENT:
+
+Add to your output when temporal references are used:
+```json
+"temporal_reference_check": {
+  "days_since_last_activity": 3,
+  "time_phrase_used": "suite à nos échanges récents",
+  "phrase_appropriate_for_recency": true,
+  "deal_status": "OPEN",
+  "dormancy_phrases_blocked": true
+}
+```
+
+### VALIDATION BEFORE OUTPUT:
+
+```
+BEFORE generating message content:
+
+□ Check days_since_last_activity from state_analyzer
+□ Verify time phrase matches actual recency
+□ If days_since < 30 AND message contains "ça fait un moment" → REJECT
+□ If deal is OPEN AND message implies dormancy → REJECT
+□ If is_active_customer AND message uses re-engagement tone → REJECT
+```
+
+### EXAMPLE ERRORS TO AVOID:
+
+❌ **WRONG** (3 days since activity):
+"Ça fait un moment depuis notre démo de fin août..."
+→ Implies 100+ days when reality is 3 days
+
+❌ **WRONG** (OPEN deal):
+"Le sujet est-il toujours d'actualité?"
+→ Implies doubt about active deal
+
+✅ **CORRECT** (3 days since activity):
+"Suite à notre échange de mardi..."
+→ Matches recent activity
+
+✅ **CORRECT** (OPEN deal):
+"Pour faire le point avant la prochaine étape..."
+→ Acknowledges active deal
+
+====================
 ☕ PROXIMITY & HUMAN CONNECTION MESSAGES (CONDITIONAL)
 ====================
 
