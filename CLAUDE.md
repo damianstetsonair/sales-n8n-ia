@@ -158,6 +158,373 @@ Synthesis must include active customer check:
 
 ---
 
+## 🚨 V13.0 Churn Signal Detection (CRITICAL FIX)
+
+### Bug Fixed in V13.0
+
+**The Problem:**
+The system was not detecting formal contract termination emails. It ignored:
+- Formal churn emails from decision makers (CDIO, CEO, etc.)
+- Meeting cancellations related to churn ("Refusé: André x Bertran")
+- Explicit future recontact timing ("automne 2026")
+- The fact that our team had already responded to the churn
+
+**Real Example of the Bug:**
+```
+What the system thought:
+  - "wait_type: meeting_scheduled" (meeting was CANCELLED)
+  - "deal_status: closed_won" (customer CHURNED)
+  - Generated outreach to a churned customer
+
+Reality (reading email body):
+  - 13/12 → CDIO sends formal email: "nous avons pris la décision de dénoncer le contrat"
+  - 13/12 → CDIO explains: "le produit ne correspond plus exactement à nos besoins"
+  - 13/12 → CDIO gives timeline: "automne 2026" for potential future contact
+  - 13/12 → Bertran RESPONDS acknowledging the churn
+  - 16/12 → André CANCELS the weekly meeting ("Refusé: André x Bertran - Weekly")
+```
+
+### The Fix: Email Body Signal Detection (STEP -0.2)
+
+State Analyzer now MUST scan EMAIL metadata.body for critical signals:
+
+```
+STEP -0.2: SCAN EMAIL BODY FOR CRITICAL SIGNALS
+
+FOR EACH activity WHERE activity_type = "EMAIL":
+  body = activity.metadata.body.lower()
+
+  // Check for CHURN signals
+  CHURN_KEYWORDS = [
+    "dénoncer le contrat", "résiliation", "résilier",
+    "ne souhaite pas poursuivre", "mettre fin", "fin de contrat",
+    "terminate the contract", "termination", "cancel subscription"
+  ]
+
+  FOR EACH keyword IN CHURN_KEYWORDS:
+    IF keyword IN body:
+      churn_detected = true
+      churn_source = activity
+
+  // Check sender authority
+  IF churn_detected AND sender_job contains ("Chief", "Director", "VP", "Head"):
+    authority_level = "decision_maker"
+    → Email OVERRIDES HubSpot deal status
+```
+
+### Meeting Cancellation Detection
+
+Scan activity titles for cancellation patterns:
+
+```
+CANCELLATION_PREFIXES = ["Refusé:", "Declined:", "Annulé:", "Cancelled:"]
+
+FOR EACH activity:
+  IF activity.metadata.title.startswith(any CANCELLATION_PREFIX):
+    meeting_cancelled = true
+    → has_upcoming_meeting = false (even if meeting exists in activities)
+```
+
+### Response Detection
+
+Before flagging a churn signal, check if we already responded:
+
+```
+IF churn_detected:
+  churn_date = churn_activity.recorded_on
+
+  FOR EACH activity WHERE recorded_on > churn_date:
+    IF direction = "OUTBOUND":
+      already_responded = true
+      response_date = activity.recorded_on
+      → action = "wait" (we already handled this)
+```
+
+### Future Timing Extraction
+
+Parse timing keywords from churn emails:
+
+| Keyword | Parsed Date |
+|---------|-------------|
+| "automne 2026" | 2026-09-01T09:00:00+02:00 |
+| "printemps 2026" | 2026-03-21T09:00:00+01:00 |
+| "début 2026" | 2026-01-06T09:00:00+01:00 |
+| "fin 2026" | 2026-11-15T09:00:00+01:00 |
+| "l'année prochaine" | First Monday of January |
+
+### Churn Signal Detection Output
+
+State Analyzer must include:
+```json
+"critical_signal_detection": {
+  "churn_detected": true,
+  "churn_signals": [{
+    "signal_type": "contract_termination",
+    "sender": "Pierre Martin",
+    "sender_role": "Chief Digital & Information Officer",
+    "authority_level": "decision_maker",
+    "keyword_matched": "dénoncer le contrat",
+    "verbatim_quote": "nous avons pris la décision de dénoncer le contrat"
+  }],
+  "meeting_cancelled": true,
+  "meeting_cancellation": {
+    "cancelled_meeting_title": "Refusé: André x Bertran - Weekly",
+    "cancellation_context": "post_churn"
+  },
+  "future_timing": {
+    "exists": true,
+    "verbatim": "automne 2026",
+    "parsed_date_iso": "2026-09-01T09:00:00+02:00"
+  },
+  "response_status": {
+    "already_responded": true,
+    "response_date": "2025-12-13T15:30:00+00:00"
+  }
+}
+```
+
+### Deal Status Override
+
+Email content OVERRIDES HubSpot deal status:
+
+```
+IF churn_detected AND authority_level = "decision_maker":
+  deal_status_override = "CHURNED"
+  original_hubspot_status = deal_status
+  is_active_customer = false
+  customer_status = "CHURNED"
+```
+
+### Synthesis Churn Safety Check
+
+Synthesis must include:
+```json
+"churn_signal_check": {
+  "churn_detected": true,
+  "deal_status_override": {
+    "original_status": "CLOSED_WON",
+    "overridden_to": "CHURNED"
+  },
+  "already_responded": true,
+  "future_timing": {
+    "exists": true,
+    "parsed_date": "2026-09-01T09:00:00+02:00"
+  },
+  "action_determination": {
+    "action": "wait",
+    "reason": "Churn acknowledged, future timing agreed",
+    "reevaluate_at": "2026-09-01T09:00:00+02:00"
+  }
+}
+```
+
+### Forbidden Patterns for Churned Contacts
+
+These combinations are **FORBIDDEN**:
+- ❌ Churn detected + wait_type = "meeting_scheduled" (meeting was CANCELLED)
+- ❌ Churn detected + deal_status = "CLOSED_WON" (should be CHURNED)
+- ❌ Churn detected + is_active_customer = true
+- ❌ Already responded + action = "send_message"
+- ❌ Future timing "automne 2026" + reevaluate_at in January
+
+### Content Generator Churn Protection
+
+Content Generator must block all sales content for churned contacts:
+
+```
+IF churn_detected = true:
+  should_generate = false
+  reason = "Churn detected and acknowledged"
+
+  ONLY exception: If churn NOT acknowledged yet:
+    Generate CHURN ACKNOWLEDGMENT (not sales content)
+    Template: graceful_churn_response
+```
+
+### V13.1 Improvements (Testing Session Fixes)
+
+Based on testing session feedback, the following improvements were made:
+
+1. **STEP -0.9 Moved to Start**: Churn detection now executes at the very beginning of State Analyzer, before any other analysis. This ensures churned contacts are caught immediately.
+
+2. **BLOCK Logic in Content Generator**: Added explicit BLOCK 0, BLOCK 1, BLOCK 2 checks at the very start of Content Generator that return immediately if churn is detected.
+
+3. **Channel Selector Override**: Added OVERRIDE 0 and OVERRIDE 1 at the start of Channel Selector that return `primary_channel: "NONE"` for churned contacts.
+
+4. **Explicit NO FILTER Rules**: Activity scan rules now explicitly state:
+   - ❌ DO NOT filter by deals[] array content
+   - ❌ DO NOT filter by owner_hubspot_id
+   - ❌ DO NOT filter by activity_type
+   - ❌ DO NOT filter by direction
+
+5. **Response Detection Before Action**: All agents now check if we already responded to a churn signal before recommending any action.
+
+### Agent Churn Handling Matrix
+
+| Agent | Check | Action if Churn Detected |
+|-------|-------|--------------------------|
+| State Analyzer | STEP -0.9 (first step) | Set customer_status = "CHURNED", action_needed = false if responded |
+| Channel Selector | OVERRIDE 0 | Return primary_channel = "NONE" |
+| Content Generator | BLOCK 0 | Return content_blocked = true |
+| Synthesis Orchestrator | CHECK 0 | Force action = "no_action" if responded |
+| Evaluation Orchestrator | CHECK 1 | Validate all agents detected churn |
+
+---
+
+## 🚨 V14.0 Multi-Deal, Multi-Owner & Safety Checks (CRITICAL)
+
+### Overview
+
+V14 addresses three critical bugs where the system was not properly handling:
+1. Contacts with multiple deals (old lost deal + new open deal)
+2. Multiple team members working the same contact
+3. Scheduled touchpoints buried in email/note content
+
+### STEP -0.5: Multi-Deal Contact Handling
+
+A contact may have MULTIPLE deals. The system now scans all activities and classifies each deal:
+
+```
+Priority Logic:
+IF any deal is OPEN → contact_status = ACTIVE_PROSPECT (NOT nurture!)
+ELIF any deal is CLOSED_WON → contact_status = ACTIVE_CUSTOMER
+ELSE (all CLOSED_LOST) → contact_status = NURTURE_CANDIDATE
+```
+
+**Output:**
+```json
+"multi_deal_analysis": {
+  "deals_found": [
+    {"deal_hubspot_id": "123", "status": "CLOSED_LOST", "dealstage": "Ghosting to nurture"},
+    {"deal_hubspot_id": "456", "status": "OPEN", "dealstage": "Go Meeting Pro2LT"}
+  ],
+  "total_deals": 2,
+  "has_open_deal": true,
+  "primary_deal": {"deal_hubspot_id": "456", "reason": "OPEN deal takes priority"},
+  "contact_status": "ACTIVE_PROSPECT"
+}
+```
+
+### STEP -0.4: Multi-Owner Activity Tracking
+
+Multiple team members may work the same contact. The system now tracks all team member activities:
+
+```
+IF other_contributor.last_activity < 14 days AND has scheduled next_step:
+  → action = "wait" or "no_action"
+  → rationale = "Another team member is actively working this contact"
+```
+
+**Output:**
+```json
+"team_involvement": {
+  "team_members_active": ["bertran_ruiz", "roland_bouchut"],
+  "primary_owner": "bertran_ruiz",
+  "other_contributors": [{
+    "name": "roland_bouchut",
+    "last_activity": "2025-12-17",
+    "days_since_last": 3,
+    "recent_activities": ["EMAIL: Déjeuner reprogrammé"]
+  }],
+  "coordination_needed": true
+}
+```
+
+### STEP -0.3: Scheduled Touchpoint Detection
+
+Scans emails/notes for scheduled meetings that may not be in the calendar yet:
+
+**Detection patterns:**
+- Email: "semaine du 13/1", "le 07/01", "OK pour", "c'est noté"
+- Note: "Suivi booké", "RDV prévu le", "Next step:"
+- Meeting: recorded_on > today
+
+**Output:**
+```json
+"scheduled_touchpoints": {
+  "has_scheduled_touchpoint": true,
+  "touchpoints": [{
+    "type": "lunch",
+    "with": "roland_bouchut",
+    "scheduled_for": "2026-01-13 to 2026-01-17",
+    "verbatim": "plutot la semaine du 13/1"
+  }],
+  "implication": "No outreach needed - scheduled touchpoint exists"
+}
+```
+
+### Synthesis Safety Checks (5 Checks)
+
+Before final output, Synthesis runs 5 safety checks:
+
+| Check | What it Validates | Action if Failed |
+|-------|-------------------|------------------|
+| Multi-Deal Consistency | OPEN deal → no re-engagement template | REJECT |
+| Multi-Owner Coordination | Other team member active < 14d | BLOCK |
+| Scheduled Touchpoint Respect | Touchpoint < 30 days | WAIT |
+| Temporal Reference Accuracy | Message matches actual recency | REJECT |
+| Activity Recency Sanity | High activity + long gap = scan error | FLAG |
+
+**Output:**
+```json
+"synthesis_safety_checks": {
+  "multi_deal_consistency": {"passed": true},
+  "multi_owner_coordination": {"passed": false, "action": "BLOCK"},
+  "scheduled_touchpoint_respect": {"passed": false, "action": "WAIT"},
+  "temporal_reference_accuracy": {"passed": true},
+  "activity_recency_sanity": {"passed": true},
+  "overall_verdict": "BLOCK",
+  "blocking_reason": "Another team member has scheduled touchpoint"
+}
+```
+
+### Temporal Reference Accuracy (Content Generator)
+
+Content Generator now validates time phrases against actual activity recency:
+
+| days_since | Allowed Phrases | Forbidden Phrases |
+|------------|-----------------|-------------------|
+| 0-7 | "suite à notre échange récent" | "ça fait un moment" |
+| 8-30 | "suite à notre échange de [month]" | "plusieurs mois" |
+| 31-60 | "depuis quelques semaines" | "ça fait un moment" |
+| 61-90 | "ça fait quelques mois" | "un an" |
+| 91-180 | "ça fait un moment" | "récemment" |
+| 180+ | "depuis notre [event] de [year]" | "il y a peu" |
+
+### Context Analyzer: Deal Context
+
+Context Analyzer now outputs `deal_context` with messaging constraints:
+
+```json
+"deal_context": {
+  "primary_deal_status": "OPEN",
+  "relationship_context": "ACTIVE_SALES_CYCLE",
+  "appropriate_action_types": ["sales_followup", "value_share"],
+  "prohibited_action_types": ["re_engagement", "nurture"],
+  "messaging_constraints": {
+    "avoid_phrases": ["ça fait un moment", "depuis notre démo de mars"],
+    "reason": "Deal is ACTIVE - these phrases imply dormancy"
+  }
+}
+```
+
+### Forbidden Patterns Summary
+
+**For OPEN deals:**
+- ❌ "Ça fait un moment"
+- ❌ "Depuis notre démo de [old date]"
+- ❌ "Le sujet est-il toujours d'actualité"
+
+**For active customers (activity < 14 days):**
+- ❌ Re-engagement templates
+- ❌ Any phrase implying dormancy
+
+**When other team member active:**
+- ❌ Sending parallel outreach
+- ❌ Ignoring scheduled touchpoints
+
+---
+
 ## V10.0 Decision Pipeline Stages
 
 The multi-agent system follows a structured decision pipeline inspired by V10.0 algorithm:

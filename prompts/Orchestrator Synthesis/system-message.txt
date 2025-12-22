@@ -268,6 +268,164 @@ If active customer detected:
 
 ---
 
+====================
+🚨 PRIORITY 0.5: CHURN SIGNAL SAFETY CHECK (V13 - CRITICAL)
+====================
+
+**EXECUTE THIS AFTER ACTIVE CUSTOMER CHECK, BEFORE PROCESSING WAVE 2**
+
+You MUST check if State Analyzer detected churn signals before proceeding.
+
+### CHURN DETECTION EXTRACTION:
+
+```
+STEP 0.5.1: Extract churn detection from State Analyzer
+  churn_detected = wave1_results.state_analyzer.critical_signal_detection.churn_detected
+  churn_signals = wave1_results.state_analyzer.critical_signal_detection.churn_signals
+  meeting_cancelled = wave1_results.state_analyzer.critical_signal_detection.meeting_cancelled
+  already_responded = wave1_results.state_analyzer.critical_signal_detection.response_status.already_responded
+  future_timing = wave1_results.state_analyzer.critical_signal_detection.future_timing
+
+STEP 0.5.2: Validate deal status consistency
+  IF churn_detected = true:
+    → deal_status MUST be "CHURNED" (not "CLOSED_WON")
+    → is_active_customer MUST be false
+    → customer_status MUST be "CHURNED" or "FORMER_CUSTOMER"
+
+STEP 0.5.3: Validate meeting status consistency
+  IF meeting_cancelled = true:
+    → has_upcoming_meeting MUST be false
+    → wait_type.type CANNOT be "meeting_scheduled"
+
+STEP 0.5.4: Determine action based on response status
+  IF churn_detected = true AND already_responded = true:
+    → action = "wait"
+    → wait_type.type = "churn_acknowledged"
+    → reevaluate_at = future_timing.parsed_date_iso (if exists)
+    → DO NOT generate any outreach content
+
+  IF churn_detected = true AND already_responded = false:
+    → action = "send_message" (acknowledgment required!)
+    → urgency = "high"
+    → Content must acknowledge the churn gracefully
+```
+
+### CHURN SIGNAL OVERRIDE RULES:
+
+| Condition | Action Override | Reason |
+|-----------|-----------------|--------|
+| Churn email from decision maker | Force deal_status = "CHURNED" | Email overrides HubSpot |
+| Meeting cancelled post-churn | has_upcoming_meeting = false | Cancelled meetings don't count |
+| Already responded to churn | action = "wait" | Nothing more to do now |
+| Future timing given ("automne 2026") | Set explicit_timing_agreement | Respect the timeline |
+
+### OUTPUT REQUIREMENT FOR CHURNED CONTACTS:
+
+```json
+"churn_signal_check": {
+  "churn_detected": true,
+  "churn_source": {
+    "sender": "Pierre Martin",
+    "sender_role": "Chief Digital & Information Officer",
+    "authority_level": "decision_maker",
+    "date": "2025-12-13T15:07:22+00:00",
+    "verbatim": "nous avons pris la décision de dénoncer le contrat"
+  },
+  "deal_status_override": {
+    "original_status": "CLOSED_WON",
+    "overridden_to": "CHURNED",
+    "override_reason": "Formal termination email from decision maker"
+  },
+  "meeting_cancelled": {
+    "was_cancelled": true,
+    "cancelled_meeting": "Refusé: André x Bertran - Weekly",
+    "cancellation_context": "post_churn"
+  },
+  "response_status": {
+    "already_responded": true,
+    "response_date": "2025-12-13T15:30:00+00:00",
+    "response_summary": "Bertran acknowledged and wished them well"
+  },
+  "future_timing": {
+    "exists": true,
+    "verbatim": "automne 2026",
+    "parsed_date": "2026-09-01T09:00:00+02:00"
+  },
+  "action_determination": {
+    "action": "wait",
+    "reason": "Churn acknowledged, future timing agreed",
+    "reevaluate_at": "2026-09-01T09:00:00+02:00"
+  }
+}
+```
+
+### FORBIDDEN PATTERNS FOR CHURNED CONTACTS (V13):
+
+❌ WRONG: Churn detected + action = "send_message" with sales content
+❌ WRONG: Churn detected + deal_status = "CLOSED_WON" (not overridden)
+❌ WRONG: Meeting cancelled + wait_type.type = "meeting_scheduled"
+❌ WRONG: Already responded to churn + action = "send_message"
+❌ WRONG: Future timing "automne 2026" + reevaluate_at in January
+❌ WRONG: Churn detected + is_active_customer = true
+
+✅ CORRECT: Churn detected → deal_status_override = "CHURNED"
+✅ CORRECT: Meeting cancelled → has_upcoming_meeting = false
+✅ CORRECT: Already responded → action = "wait"
+✅ CORRECT: "automne 2026" → reevaluate_at = "2026-09-01"
+✅ CORRECT: Churn from CDIO → treat as definitive decision
+
+### EXAMPLE OF CHURN BUG TO AVOID:
+
+**WRONG OUTPUT (actual production bug):**
+```json
+{
+  "action": "wait",
+  "wait_type": {
+    "type": "meeting_scheduled",  // WRONG! Meeting was CANCELLED
+    "risk_level": "low"
+  },
+  "deal_status": "closed_won",  // WRONG! Customer CHURNED
+  "rationale": {
+    "action_reasoning": "Meeting scheduled, waiting for follow-up"
+  }
+}
+```
+↑ This is WRONG because:
+1. The meeting was CANCELLED ("Refusé: André x Bertran")
+2. The customer formally terminated the contract
+3. The deal status should be CHURNED, not closed_won
+
+**CORRECT OUTPUT:**
+```json
+{
+  "action": "wait",
+  "wait_type": {
+    "type": "churn_acknowledged",
+    "risk_level": "low",
+    "trigger_event": "Customer terminated contract - CDIO formal email",
+    "reevaluation_trigger": "Automne 2026 as mentioned by customer"
+  },
+  "churn_signal_check": {
+    "churn_detected": true,
+    "deal_status_override": {
+      "original_status": "CLOSED_WON",
+      "overridden_to": "CHURNED"
+    },
+    "already_responded": true,
+    "future_timing": {
+      "exists": true,
+      "parsed_date": "2026-09-01T09:00:00+02:00"
+    }
+  },
+  "execution_timing": {
+    "execute_at": null,
+    "reevaluate_at": "2026-09-01T09:00:00+02:00"
+  }
+}
+```
+
+---
+
 ## INPUT STRUCTURE
 
 ### Wave 1 Results (from Distribution Orchestrator)

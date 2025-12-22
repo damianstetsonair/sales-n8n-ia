@@ -279,6 +279,98 @@ THEN:
 - "Active customer correctly identified (last activity [X] days ago)"
 - "Meeting scheduled detected - wait action correctly recommended"
 
+### 🚨 CHURN SIGNAL DETECTION VALIDATION (V13 - CRITICAL)
+
+**THIS IS A HIGH PRIORITY VALIDATION. Check this immediately after Active Customer detection.**
+
+A churned customer receiving sales content is a CRITICAL ERROR that will:
+- Show complete lack of awareness (CDIO sent formal termination, we're pitching)
+- Damage any chance of future relationship
+- Embarrass the sales team
+
+```
+CHECK 1: Churn Signal Detection
+IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true
+   AND wave2_results.content_generator.per_channel_messages is NOT empty
+   AND wave2_results.content_generator.churn_acknowledgment_generation.sales_content_blocked = false
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "SALES CONTENT GENERATED FOR CHURNED CUSTOMER",
+       "detail": "Customer has formally churned (email from [sender_role]) but sales content was generated instead of blocking",
+       "resolution": "ABORT - Content Generator must block all sales content for churned contacts"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.content_generator = "CRITICAL: Customer has CHURNED. Do NOT generate sales content. Set should_generate = false."
+
+CHECK 2: Meeting Cancelled After Churn
+IF wave1_results.state_analyzer.critical_signal_detection.meeting_cancelled = true
+   AND wave1_results.state_analyzer.meeting_scheduled.has_upcoming_meeting = true
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "MEETING MARKED AS SCHEDULED BUT WAS CANCELLED",
+       "detail": "Meeting '[title]' was cancelled (Refusé:/Declined:) but system still shows has_upcoming_meeting = true",
+       "resolution": "State Analyzer must detect cancellation and set has_upcoming_meeting = false"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.state_analyzer = "CRITICAL: Meeting was CANCELLED. Check metadata.title for 'Refusé:' prefix. Set has_upcoming_meeting = false."
+
+CHECK 3: Deal Status Override Missing
+IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true
+   AND wave1_results.state_analyzer.deal_context.deal_status = "closed"
+   AND wave1_results.state_analyzer.deal_context.deal_status_override is null OR empty
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "critical",
+       "issue": "CHURN DETECTED BUT DEAL STATUS NOT OVERRIDDEN",
+       "detail": "Formal churn email from decision maker but deal_status_override not set to 'CHURNED'",
+       "resolution": "State Analyzer must override HubSpot deal status with email content"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.state_analyzer = "CRITICAL: Override deal_status to 'CHURNED'. Email from decision maker takes precedence over HubSpot status."
+
+CHECK 4: Response Detection Accuracy
+IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true
+   AND wave1_results.state_analyzer.critical_signal_detection.response_status.already_responded = false
+   AND activities[] contains OUTBOUND after churn_signal date
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "high",
+       "issue": "RESPONSE DETECTION FAILURE",
+       "detail": "Churn detected and OUTBOUND exists after churn date, but already_responded = false",
+       "resolution": "State Analyzer must scan for OUTBOUNDs after churn signal date"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.state_analyzer = "CRITICAL: Rescan activities for OUTBOUND after churn signal. We already responded to this churn."
+
+CHECK 5: Future Timing Extraction
+IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true
+   AND churn email body contains timing phrases ("automne 2026", "l'année prochaine", "dans X mois")
+   AND wave1_results.state_analyzer.critical_signal_detection.future_timing.exists = false
+THEN:
+   - Add to issues_found:
+     {
+       "severity": "high",
+       "issue": "FUTURE TIMING NOT EXTRACTED FROM CHURN EMAIL",
+       "detail": "Churn email contains future recontact timing but future_timing.exists = false",
+       "resolution": "State Analyzer must parse timing keywords and extract ISO date"
+     }
+   - Set evaluation_decision.action = "retry"
+   - Set retry_instructions.state_analyzer = "CRITICAL: Extract future timing from churn email. Set future_timing with parsed_date_iso."
+```
+
+**ADD to strengths_found when churn correctly handled:**
+- "Churn signal correctly detected from decision maker email"
+- "Deal status correctly overridden to CHURNED"
+- "Response detection accurate - already_responded correctly set"
+- "Future timing correctly extracted and parsed"
+- "Sales content correctly blocked for churned contact"
+
 ### ⚠️ LINKEDIN URL STRATEGY VALIDATION (V11)
 
 When evaluating wave2_results.content_generator.per_channel_messages.LINKEDIN:

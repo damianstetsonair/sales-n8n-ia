@@ -4,7 +4,7 @@
 
 This document is the **exact photograph** of the n8n workflow for AI agents to understand the system architecture without parsing the full JSON.
 
-**Last verified**: 2025-12-18 against `n8n-workflow.json`
+**Last verified**: 2025-12-22 against `n8n-workflow.json` (V14 features added)
 **Estimated execution time**: ~7 minutes per contact
 
 ---
@@ -1018,22 +1018,22 @@ flowchart TB
 
 ---
 
-### The Master Decision Tree
+### The Master Decision Tree (Updated V14)
 
 ```mermaid
 flowchart TB
     START((Start Decision))
 
-    %% First gate: Do we have content?
+    %% V13/V14 Pre-checks
+    CHECK_CHURN{"🚨 V13: Churn<br/>signal detected?"}
+    CHECK_MULTIDEAL{"🔄 V14: Multiple deals?<br/>OPEN deal exists?"}
+    CHECK_MULTIOWNER{"👥 V14: Other team member<br/>active < 14 days?"}
+    CHECK_TOUCHPOINT{"📅 V14: Scheduled<br/>touchpoint < 30 days?"}
+
+    %% Original gates
     CHECK_CONTENT{"Content Generator<br/>produced message?"}
-
-    %% Second gate: Blockers check
     CHECK_BLOCKERS{"Any hard blockers?<br/>• Meeting scheduled<br/>• Explicit wait request<br/>• 5+ ghosting"}
-
-    %% Third gate: Ghosting level
     CHECK_GHOST{"Ghosting level?<br/>(consecutive outbounds<br/>without response)"}
-
-    %% Engagement signal check
     CHECK_ENGAGE{"Recent engagement<br/>signal?<br/>(like, view, comment)"}
 
     %% Actions
@@ -1041,10 +1041,29 @@ flowchart TB
     SEND_LIGHT["✅ action = 'send_message'<br/>Lighter touch (coffee, check-in)"]
     SEND_NOW["⚡ action = 'send_message'<br/>IMMEDIATELY (capitalize signal)"]
     WAIT["⏸️ action = 'wait'<br/>+ wait_type MANDATORY"]
+    WAIT_CHURN["⏸️ action = 'wait'<br/>wait_type = 'churn_acknowledged'"]
+    WAIT_COORD["⏸️ action = 'wait'<br/>wait_type = 'coordination_needed'"]
     BREAKUP["👋 action = 'break_up'<br/>Final respectful message"]
     NOACTION["🚫 action = 'no_action'<br/>Manual review needed"]
 
-    START --> CHECK_CONTENT
+    START --> CHECK_CHURN
+
+    %% V13 Churn check
+    CHECK_CHURN -->|"Yes + responded"| WAIT_CHURN
+    CHECK_CHURN -->|"Yes + NOT responded"| SEND["Send acknowledgment"]
+    CHECK_CHURN -->|"No"| CHECK_MULTIDEAL
+
+    %% V14 Multi-deal check
+    CHECK_MULTIDEAL -->|"OPEN deal found"| CHECK_MULTIOWNER
+    CHECK_MULTIDEAL -->|"All CLOSED_LOST"| CHECK_MULTIOWNER
+
+    %% V14 Multi-owner check
+    CHECK_MULTIOWNER -->|"Yes + touchpoint"| WAIT_COORD
+    CHECK_MULTIOWNER -->|"No"| CHECK_TOUCHPOINT
+
+    %% V14 Scheduled touchpoint check
+    CHECK_TOUCHPOINT -->|"Yes"| WAIT
+    CHECK_TOUCHPOINT -->|"No"| CHECK_CONTENT
 
     CHECK_CONTENT -->|"No"| CHECK_GHOST
     CHECK_CONTENT -->|"Yes"| CHECK_BLOCKERS
@@ -1062,13 +1081,29 @@ flowchart TB
     CHECK_ENGAGE -->|"No"| SEND
 
     %% Styling
+    style CHECK_CHURN fill:#ffebee,stroke:#c62828
+    style CHECK_MULTIDEAL fill:#e3f2fd,stroke:#1565c0
+    style CHECK_MULTIOWNER fill:#e8f5e9,stroke:#2e7d32
+    style CHECK_TOUCHPOINT fill:#fff3e0,stroke:#e65100
     style SEND fill:#c8e6c9,stroke:#2e7d32
     style SEND_LIGHT fill:#dcedc8,stroke:#558b2f
     style SEND_NOW fill:#a5d6a7,stroke:#1b5e20
     style WAIT fill:#fff9c4,stroke:#f9a825
+    style WAIT_CHURN fill:#ffcdd2,stroke:#c62828
+    style WAIT_COORD fill:#e1f5fe,stroke:#0288d1
     style BREAKUP fill:#ffcdd2,stroke:#c62828
     style NOACTION fill:#cfd8dc,stroke:#455a64
 ```
+
+### V13/V14 Pre-Decision Safety Checks
+
+| Check | When Triggered | Action |
+|-------|----------------|--------|
+| **Churn Detection (V13)** | Email body contains termination keywords | Override to CHURNED, wait if responded |
+| **Multi-Deal (V14)** | Contact has multiple deals | OPEN deal takes priority over CLOSED_LOST |
+| **Multi-Owner (V14)** | Other team member active < 14 days | Wait for coordination |
+| **Scheduled Touchpoint (V14)** | Touchpoint found in emails/notes | Wait until after touchpoint |
+| **Temporal Accuracy (V14)** | Message contains time reference | Validate against actual activity recency |
 
 ---
 
@@ -1362,6 +1397,16 @@ Before finalizing, the Synthesis Orchestrator validates:
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
+│              V13/V14 PRE-DECISION CHECKS (NEW)                  │
+│                                                                 │
+│  0. 🚨 Churn detected? → WAIT (if responded) or ACK (if not)   │
+│  1. 🔄 OPEN deal exists? → Use active prospect messaging       │
+│  2. 👥 Other team member active? → WAIT for coordination       │
+│  3. 📅 Scheduled touchpoint? → WAIT until after touchpoint     │
+│  4. 🕐 Temporal reference accurate? → REJECT if mismatch       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
 │                    DECISION PRIORITY                            │
 │                                                                 │
 │  1. Content exists → SEND (unless hard blocker)                │
@@ -1381,6 +1426,7 @@ Before finalizing, the Synthesis Orchestrator validates:
 │  • Every opportunity_strength → breakdown with evidence         │
 │  • Every wait decision → wait_type with risk_level              │
 │  • Silence is worse than a friendly message                     │
+│  • V14: synthesis_safety_checks MUST pass before output         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

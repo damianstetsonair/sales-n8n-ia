@@ -196,6 +196,259 @@ Before continuing to STEP 0, verify:
 □ All activity types are included (not just EMAIL/MEETING)
 
 ====================
+🚨 STEP -0.9: EMAIL BODY CONTENT ANALYSIS (HIGHEST PRIORITY - DO FIRST!)
+====================
+
+**CRITICAL: EXECUTE THIS BEFORE ANY OTHER ANALYSIS. IF CHURN DETECTED → ABORT ALL OUTREACH.**
+
+Before ANY other analysis, you MUST scan ALL EMAIL activities with direction="INBOUND"
+and analyze the `metadata.body` field for CRITICAL SIGNALS.
+
+### A) CHURN SIGNALS (If ANY found → ABORT all outreach recommendations)
+
+Scan `metadata.body` for these keywords/phrases:
+
+**French churn keywords:**
+- "dénoncer le contrat"
+- "résiliation" / "résilier"
+- "ne souhaite pas poursuivre"
+- "ne souhaitons pas poursuivre"
+- "mettre fin"
+- "fin de contrat"
+- "arrêter la collaboration"
+- "ne pas renouveler"
+- "non-renouvellement"
+- "décision de ne pas continuer"
+- "cessation"
+- "nous quittons"
+- "annuler notre contrat"
+- "terminer notre relation"
+
+**English churn keywords:**
+- "terminate the contract"
+- "termination"
+- "cancel subscription"
+- "cancellation"
+- "not renewing"
+- "ending our agreement"
+- "discontinue"
+- "will not continue"
+- "decision to leave"
+
+**Also scan activity titles for:**
+- "Refusé :" or "Refusé:" (meeting declined)
+- "Annulé :" or "Annulé:" (meeting cancelled)
+- "Declined:" or "Cancelled:"
+- Contains "résiliation" or "annulation"
+
+### CHURN DETECTION ALGORITHM (EXECUTE IMMEDIATELY):
+
+```
+CHURN_DETECTED = false
+CHURN_SIGNALS = []
+
+FOR EACH activity in activities[]:
+
+  // Check EMAIL body for churn keywords
+  IF activity.activity_type = "EMAIL" AND activity.metadata.body exists:
+    body = activity.metadata.body.lower()
+
+    FOR EACH keyword IN churn_keywords:
+      IF keyword.lower() IN body:
+        CHURN_DETECTED = true
+        CHURN_SIGNALS.append({
+          "signal_type": "contract_termination",
+          "detected_in": "EMAIL",
+          "activity_id": activity.activity_id,
+          "activity_date": activity.recorded_on,
+          "sender": activity.sender.sender_name,
+          "sender_role": activity.sender.sender_job,
+          "keyword_matched": keyword,
+          "verbatim_quote": extract_sentence_containing(body, keyword),
+          "json_path": "activities[" + index + "].metadata.body"
+        })
+
+        // Determine authority level
+        IF sender_job contains ("Chief", "Director", "VP", "Head", "Manager", "CDIO", "CEO", "CTO", "CFO"):
+          CHURN_SIGNALS[-1]["authority_level"] = "decision_maker"
+        ELSE:
+          CHURN_SIGNALS[-1]["authority_level"] = "contact"
+
+        BREAK  // Found churn, stop checking this email
+
+  // Check activity title for cancellation
+  IF activity.metadata.title exists:
+    title = activity.metadata.title
+    IF title.startswith("Refusé:") OR title.startswith("Declined:") OR
+       title.startswith("Annulé:") OR title.startswith("Cancelled:"):
+      MEETING_CANCELLED = true
+      CANCELLED_MEETING_TITLE = title
+      CANCELLATION_DATE = activity.recorded_on
+```
+
+### B) IMMEDIATE RESPONSE CHECK (CRITICAL)
+
+IF CHURN_DETECTED = true:
+```
+signal_date = CHURN_SIGNALS[0].activity_date
+
+// Find if WE already responded AFTER the churn signal
+OUR_RESPONSE_SENT = false
+OUR_RESPONSE_ACTIVITY = null
+
+FOR EACH activity WHERE activity.recorded_on > signal_date:
+  IF activity.direction = "OUTBOUND":
+    OUR_RESPONSE_SENT = true
+    OUR_RESPONSE_ACTIVITY = activity
+    OUR_RESPONSE_DATE = activity.recorded_on
+    OUR_RESPONSE_BY = activity.owner.owner_name
+    BREAK
+
+IF OUR_RESPONSE_SENT = true:
+  → further_action_needed = FALSE
+  → action_needed = FALSE
+  → statut = "ATTENTE"
+  → reason = "CHURN acknowledged - response already sent"
+ELSE:
+  → further_action_needed = TRUE (but only to acknowledge, NOT sales content)
+  → urgency = "high"
+```
+
+### C) TIMING AGREEMENT EXTRACTION
+
+Scan for explicit recontact timing in churn emails:
+
+**French patterns:**
+- "automne [year]" → September 1 of year
+- "printemps [year]" → March 21 of year
+- "été [year]" → June 21 of year
+- "hiver [year]" → December 21 of year
+- "début [year]" → January 6 of year
+- "mi-[year]" → July 1 of year
+- "fin [year]" → November 15 of year
+- "l'année prochaine" → First Monday of next January
+- "dans [X] mois" → Today + X months
+- "recontactez-nous en [month]" → First of that month
+- "on en reparle en [month/season]" → Parse accordingly
+
+### D) OBJECTION SIGNALS EXTRACTION
+
+Scan for product/service objections (helpful for future re-engagement):
+
+- "trop restrictif" / "too restrictive"
+- "ne répond pas à notre/mon besoin" / "doesn't meet our needs"
+- "pas adapté" / "not suitable"
+- "manque de fonctionnalités" / "missing features"
+- "limitations"
+- "ne correspond pas à nos attentes"
+
+### OUTPUT REQUIREMENT (MANDATORY - ADD TO YOUR OUTPUT):
+
+```json
+"critical_signal_detection": {
+  "churn_detected": true,
+  "churn_signals": [
+    {
+      "signal_type": "contract_termination",
+      "detected_in": "EMAIL",
+      "activity_id": "98765432109",
+      "activity_date": "2025-12-13T15:07:22+00:00",
+      "sender": "Pierre Martin",
+      "sender_role": "Chief Digital & Information Officer",
+      "authority_level": "decision_maker",
+      "keyword_matched": "dénoncer le contrat",
+      "verbatim_quote": "nous avons pris la décision de dénoncer le contrat",
+      "json_path": "activities[5].metadata.body"
+    }
+  ],
+  "objection_detected": true,
+  "objection_signals": [
+    {
+      "signal_type": "product_fit",
+      "verbatim_quote": "le produit ne correspond plus exactement à nos besoins",
+      "activity_date": "2025-12-13T15:07:22+00:00"
+    }
+  ],
+  "future_timing_detected": true,
+  "future_timing": {
+    "verbatim": "automne 2026",
+    "parsed_date_iso": "2026-09-01T09:00:00+02:00",
+    "context": "churn with future recontact possibility"
+  },
+  "meeting_cancelled": true,
+  "meeting_cancellation": {
+    "cancelled_meeting_title": "Refusé: André x Bertran - Weekly",
+    "cancellation_date": "2025-12-16T10:00:00+00:00",
+    "cancellation_reason": "post_churn"
+  },
+  "response_status": {
+    "already_responded": true,
+    "response_date": "2025-12-13T15:30:00+00:00",
+    "response_by": "bertran_ruiz",
+    "response_type": "acknowledgment",
+    "response_summary": "Bertran acknowledged the churn and timing"
+  },
+  "action_override": {
+    "override_applied": true,
+    "original_action_would_be": "send_message",
+    "overridden_to": "no_action",
+    "override_reason": "CHURN detected and already acknowledged"
+  }
+}
+```
+
+### E) DEAL STATUS OVERRIDE (CRITICAL)
+
+**RULE: Email content OVERRIDES HubSpot deal status.**
+
+```
+IF churn_detected = true AND authority_level = "decision_maker":
+  → customer_status = "CHURNED"
+  → deal_status_override = "CHURNED"
+  → original_hubspot_status = [whatever HubSpot says]
+  → is_active_customer = FALSE
+  → override_reason = "Formal termination email from decision maker"
+```
+
+### F) IMPACT ON ALL SUBSEQUENT ANALYSIS
+
+IF CHURN_DETECTED = true AND OUR_RESPONSE_SENT = true:
+```
+→ statut.value = "ATTENTE"
+→ statut.reason = "Churned customer - response already sent"
+→ action_needed = FALSE
+→ who_has_ball = "them" (but no follow-up expected)
+→ is_active_customer = FALSE
+→ customer_status = "CHURNED"
+→ has_upcoming_meeting = FALSE (even if meeting exists, it was cancelled)
+→ wait_type.type = "churn_acknowledged"
+→ reevaluate_at = future_timing.parsed_date_iso (if exists)
+```
+
+IF CHURN_DETECTED = true AND OUR_RESPONSE_SENT = false:
+```
+→ statut.value = "ACTION_RECOMMANDÉE"
+→ statut.reason = "Churn email received - needs acknowledgment (NOT sales content)"
+→ action_needed = TRUE
+→ urgency = "high"
+→ action_type = "churn_acknowledgment" (NOT re-engagement, NOT sales)
+```
+
+### ⛔ ABSOLUTE FORBIDDEN PATTERNS AFTER CHURN:
+
+❌ WRONG: Churn detected + action = "send_message" with sales content
+❌ WRONG: Churn detected + wait_type = "meeting_scheduled" (meeting was CANCELLED!)
+❌ WRONG: Churn detected + deal_status = "CLOSED_WON" (must override to CHURNED)
+❌ WRONG: Churn detected + is_active_customer = true
+❌ WRONG: Already responded to churn + action_needed = true + action = "send_message"
+❌ WRONG: Future timing "automne 2026" → reevaluate_at in January 2026
+
+✅ CORRECT: Churn detected → deal_status_override = "CHURNED"
+✅ CORRECT: Meeting cancelled → has_upcoming_meeting = false
+✅ CORRECT: Already responded → action = "no_action" or "wait"
+✅ CORRECT: Future timing "automne 2026" → reevaluate_at = "2026-09-01T09:00:00+02:00"
+
+====================
 🚨 STEP -0.5: MULTI-DEAL CONTACT HANDLING (CRITICAL)
 ====================
 

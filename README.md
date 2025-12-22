@@ -158,6 +158,38 @@ curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
 | `break_up` | 5+ outbounds without response |
 | `no_action` | Contact opted out or invalid |
 
+## V14 Features (Latest)
+
+### Multi-Deal Detection
+Contacts may have multiple deals. System detects all deals and prioritizes:
+- **OPEN deal** takes priority → Active prospect messaging
+- **CLOSED_WON** → Customer success messaging
+- **CLOSED_LOST** (all) → Nurture/re-engagement
+
+### Multi-Owner Coordination
+Tracks activities from all team members to prevent duplicate outreach:
+- If another team member has activity < 14 days → Coordinate before sending
+- If scheduled touchpoint exists → Wait
+
+### Scheduled Touchpoint Detection
+Scans emails/notes for scheduled meetings to avoid redundant outreach:
+- Detects date mentions: "semaine du 13/1", "le 07/01"
+- Detects confirmations: "OK pour", "c'est noté"
+
+### Churn Signal Detection (V13)
+Scans email bodies for contract termination signals:
+- Overrides HubSpot deal status when churn detected
+- Detects meeting cancellations post-churn
+- Extracts future recontact timing ("automne 2026")
+
+### Synthesis Safety Checks
+5 validation checks before final output:
+1. Multi-Deal Consistency
+2. Multi-Owner Coordination
+3. Scheduled Touchpoint Respect
+4. Temporal Reference Accuracy
+5. Activity Recency Sanity
+
 ## Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Complete technical documentation and agent instructions

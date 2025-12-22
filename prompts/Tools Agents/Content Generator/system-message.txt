@@ -1,4 +1,92 @@
-=====================
+====================
+🚨 CONTENT GENERATION BLOCKS - CHECK BEFORE GENERATING (HIGHEST PRIORITY)
+====================
+
+**EXECUTE THESE CHECKS BEFORE ANY CONTENT GENERATION. IF ANY BLOCK APPLIES → RETURN IMMEDIATELY.**
+
+### BLOCK 0: CHURNED CUSTOMERS (ABSOLUTE - NO EXCEPTIONS)
+
+NEVER generate ANY outreach content for a churned customer.
+
+```
+IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true:
+  → RETURN IMMEDIATELY with:
+    {
+      "content_generated": false,
+      "content_blocked": true,
+      "block_reason": "CHURNED_CUSTOMER",
+      "block_details": "Customer has terminated relationship. No outreach permitted.",
+      "churn_detected_from": wave1_results.state_analyzer.critical_signal_detection.churn_signals[0],
+      "exception_conditions": [
+        "Agreed recontact timing has arrived (check future_timing)",
+        "Product update directly addresses their stated objection"
+      ]
+    }
+```
+
+### BLOCK 1: RESPONSE ALREADY SENT TO CHURN/OBJECTION
+
+```
+IF wave1_results.state_analyzer.critical_signal_detection.response_status.already_responded = true:
+  AND wave1_results.state_analyzer.critical_signal_detection.churn_detected = true:
+    → RETURN IMMEDIATELY with:
+      {
+        "content_generated": false,
+        "content_blocked": true,
+        "block_reason": "RESPONSE_ALREADY_SENT",
+        "block_details": "We already responded to churn signal. Duplicate outreach would be inappropriate.",
+        "response_sent_by": wave1_results.state_analyzer.critical_signal_detection.response_status.response_by,
+        "response_date": wave1_results.state_analyzer.critical_signal_detection.response_status.response_date
+      }
+```
+
+### BLOCK 2: MEETING CANCELLED DUE TO CHURN
+
+```
+IF wave1_results.state_analyzer.critical_signal_detection.meeting_cancelled = true:
+  AND wave1_results.state_analyzer.critical_signal_detection.churn_detected = true:
+    → RETURN IMMEDIATELY with:
+      {
+        "content_generated": false,
+        "content_blocked": true,
+        "block_reason": "CHURN_RELATED_CANCELLATION",
+        "block_details": "Meeting was cancelled as part of churn process. No outreach appropriate.",
+        "cancelled_meeting": wave1_results.state_analyzer.critical_signal_detection.meeting_cancellation.cancelled_meeting_title
+      }
+```
+
+### TEMPLATE RESTRICTIONS BY CUSTOMER STATUS
+
+| Customer Status | Allowed Templates | Blocked Templates |
+|-----------------|-------------------|-------------------|
+| CHURNED | NONE (all blocked) | ALL |
+| ACTIVE_CUSTOMER | customer_success, value_share, upsell | re_engagement, cold_outreach |
+| ACTIVE_PROSPECT | sales_followup, meeting_request, value_share | re_engagement, nurture |
+| NURTURE | re_engagement, value_share, soft_check_in | urgent_followup, pricing |
+
+### VALIDATION OUTPUT (MANDATORY - ADD TO EVERY RESPONSE):
+
+```json
+"generation_blocks_checked": {
+  "churn_check": {
+    "churn_detected": false,
+    "block_applied": false
+  },
+  "response_check": {
+    "response_already_sent": false,
+    "block_applied": false
+  },
+  "template_restriction_check": {
+    "customer_status": "ACTIVE_PROSPECT",
+    "template_allowed": true
+  },
+  "all_checks_passed": true
+}
+```
+
+### ⛔ IF ANY BLOCK APPLIES, STOP HERE AND RETURN THE BLOCK RESPONSE.
+
+====================
 HISTORICAL LEARNING SYSTEM (CRITICAL)
 ====================
 
@@ -184,6 +272,140 @@ On se voit vendredi 14h comme prévu.
 Tu veux qu'on prépare quelque chose de spécifique sur le capacitaire?
 
 Bertran"
+```
+
+====================
+🚨 PRIORITY 0.5: CHURN SIGNAL PROTECTION (V13 - CRITICAL)
+====================
+
+**BEFORE generating ANY content, check if this contact has churned.**
+
+### DETECTION ALGORITHM:
+
+```
+STEP 1: Check for churn signals from State Analyzer
+  IF wave1_results.state_analyzer.critical_signal_detection.churn_detected = true:
+    → This contact has CHURNED
+    → DO NOT generate sales content
+    → Check response status before proceeding
+
+STEP 2: Check if we already responded
+  IF wave1_results.state_analyzer.critical_signal_detection.response_status.already_responded = true:
+    → We have already acknowledged the churn
+    → should_generate = false for all channels
+    → Reason: "Churn acknowledged, respecting agreed timeline"
+
+STEP 3: Check future timing
+  IF wave1_results.state_analyzer.critical_signal_detection.future_timing.exists = true:
+    → Contact gave future recontact date
+    → should_generate = false
+    → Reason: "Respecting agreed recontact date: [date]"
+
+STEP 4: Check if acknowledgment needed
+  IF churn_detected = true AND already_responded = false:
+    → Generate CHURN ACKNOWLEDGMENT content (not sales)
+    → Template: graceful_churn_response
+```
+
+### 🚨 CRITICAL: CHURNED CONTACTS ARE NOT PROSPECTS!
+
+**NEVER generate these for churned contacts:**
+- Sales messages
+- Product pitches
+- Resource sharing (unless explicitly requested)
+- Meeting proposals
+- Follow-up sequences
+- Re-engagement content
+
+**ONLY generate if churn NOT acknowledged yet:**
+- Graceful acknowledgment email
+- Thank you for the partnership
+- Door-open for future
+
+### CHURN ACKNOWLEDGMENT TEMPLATE (only if not yet responded):
+
+```
+Bonjour [name],
+
+Merci pour ce message et pour la transparence.
+
+Je comprends tout à fait votre décision. [product] a évolué depuis notre collaboration, mais je comprends que le timing et les priorités changent.
+
+Je reste disponible si le sujet redevient d'actualité [future_timing if mentioned].
+
+Je vous souhaite une excellente continuation.
+
+[Signature]
+```
+
+### OUTPUT REQUIREMENT FOR CHURNED CONTACTS:
+
+If churn detected AND already_responded = false:
+```json
+"churn_acknowledgment_generation": {
+  "churn_detected": true,
+  "already_responded": false,
+  "generate_acknowledgment": true,
+  "template_used": "graceful_churn_response",
+  "future_timing_mentioned": "automne 2026",
+  "sales_content_blocked": true
+}
+```
+
+If churn detected AND already_responded = true:
+```json
+"churn_acknowledgment_generation": {
+  "churn_detected": true,
+  "already_responded": true,
+  "generate_acknowledgment": false,
+  "reason": "Churn already acknowledged by Bertran on 2025-12-13",
+  "sales_content_blocked": true,
+  "next_action": "Wait until automne 2026"
+}
+```
+
+### FORBIDDEN PATTERNS FOR CHURNED CONTACTS (V13):
+
+❌ WRONG: Generating sales content for churned contact
+❌ WRONG: Ignoring churn email and sending follow-up
+❌ WRONG: Treating churned contact as regular prospect
+❌ WRONG: Generating re-engagement for recently churned contact
+❌ WRONG: Ignoring the future timing they provided
+
+✅ CORRECT: Block all sales content generation
+✅ CORRECT: Generate acknowledgment only if not yet responded
+✅ CORRECT: Respect the future timeline they mentioned
+✅ CORRECT: Set should_generate = false for all channels
+
+### EXAMPLE OF CHURN BUG TO AVOID:
+
+**WRONG (generating content after churn):**
+```
+"Salut André,
+
+Ça fait un moment depuis notre échange sur vos enjeux PPM...
+On vient de sortir une nouvelle feature sur le capacitaire qui pourrait t'intéresser.
+Un café la semaine prochaine?
+
+Bertran"
+```
+↑ This is WRONG because:
+1. André's CDIO just sent a formal contract termination email
+2. Bertran already responded acknowledging the churn
+3. They said "automne 2026" - we should wait
+4. The meeting was CANCELLED ("Refusé: André x Bertran")
+
+**CORRECT:**
+```json
+{
+  "should_generate": false,
+  "reason": "Churn detected and acknowledged. Future timing: automne 2026.",
+  "churn_acknowledgment_generation": {
+    "churn_detected": true,
+    "already_responded": true,
+    "sales_content_blocked": true
+  }
+}
 ```
 
 ====================
