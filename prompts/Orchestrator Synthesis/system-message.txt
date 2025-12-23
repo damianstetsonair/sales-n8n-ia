@@ -156,6 +156,162 @@ ONLY use action="no_action" when:
 ---
 
 ====================
+🔒 PART 6: HAS_OPEN_DEAL vs NO_OPEN_DEAL STATUS DECISION MATRIX
+====================
+
+### STEP -1: DEAL STATE DETERMINATION
+
+Before determining action, classify the contact by deal state:
+
+```
+DEAL_STATE_CLASSIFICATION:
+
+FROM wave1_results.state_analyzer.multi_deal_analysis OR wave1_results.opportunity_detector.deal_classification:
+
+IF has_open_deal = true OR any deal.status = "OPEN":
+  → deal_state = "HAS_OPEN_DEAL"
+  → Apply OPEN DEAL decision matrix
+
+ELIF any deal.status IN ["CLOSED_WON", "closed"]:
+  IF days_since_last_activity <= 30:
+    → deal_state = "ACTIVE_CUSTOMER"
+  ELSE:
+    → deal_state = "DORMANT_CUSTOMER"
+
+ELIF any deal.status = "CLOSED_LOST" OR dealstage contains "nurtur":
+  → deal_state = "NURTURING"
+
+ELSE (no deals found):
+  → deal_state = "LEAD"
+```
+
+### HAS_OPEN_DEAL DECISION MATRIX
+
+When deal_state = "HAS_OPEN_DEAL":
+
+```
+| Condition | Statut | Action | Template |
+|-----------|--------|--------|----------|
+| Last = INBOUND CONVERSATIONAL < 48h | ATTENTE | wait | - |
+| Last = INBOUND CONVERSATIONAL 48h-7d | ACTION_POSSIBLE | send_message | follow_up |
+| Engagement signal < 7 days | ACTION_RECOMMANDÉE | send_message | capitalize_signal |
+| Meeting scheduled | ATTENTE_PROGRAMMÉE | wait | - |
+| We proposed slots, no response < 48h | ATTENTE | wait | - |
+| We proposed slots, no response 48-72h | ACTION_POSSIBLE | send_message | gentle_reminder |
+| We proposed slots, no response > 72h | ACTION_RECOMMANDÉE | send_message | alternative_offer |
+| Our last OUTBOUND < 3 days | ATTENTE | wait | - |
+| Our last OUTBOUND 3-7 days | ACTION_POSSIBLE | send_message | value_share |
+| Our last OUTBOUND 7-14 days | ACTION_RECOMMANDÉE | send_message | check_in |
+| Consecutive outbounds = 3-4 | ACTION_POSSIBLE | send_message | lighter_touch |
+| Consecutive outbounds >= 5 | SUIVI_LÉGER | break_up | final_message |
+```
+
+**FORBIDDEN for HAS_OPEN_DEAL:**
+- ❌ re_engagement template
+- ❌ nurture template
+- ❌ "ça fait un moment depuis..." phrasing
+- ❌ Referencing old demos/exchanges as primary hook
+
+### NO_OPEN_DEAL DECISION MATRIX
+
+When deal_state IN ["DORMANT_CUSTOMER", "NURTURING", "LEAD"]:
+
+```
+| days_since_last | Statut | Action | Template |
+|-----------------|--------|--------|----------|
+| 0-14 | SUIVI_ACTIF | send_message | customer_success |
+| 15-30 | ACTION_POSSIBLE | send_message | friendly_check_in |
+| 31-60 | ACTION_RECOMMANDÉE | send_message | re_engagement_light |
+| 61-90 | ACTION_RECOMMANDÉE | send_message | re_engagement_with_value |
+| 91-180 | ACTION_RECOMMANDÉE | send_message | re_engagement_major |
+| 180+ | ACTION_POSSIBLE | send_message | fresh_start |
+```
+
+**REQUIRED for NO_OPEN_DEAL (60+ days):**
+- ✅ Must include value element (resource, insight, meeting offer)
+- ✅ Must acknowledge time gap appropriately
+- ✅ Must reference specific context from history
+- ✅ Signature MUST match original deal owner
+
+### ACTIVE_CUSTOMER DECISION MATRIX
+
+When deal_state = "ACTIVE_CUSTOMER":
+
+```
+| Condition | Statut | Action | Template |
+|-----------|--------|--------|----------|
+| Activity < 14 days | SUIVI_ACTIF | wait or send_message | customer_success |
+| Meeting scheduled | ATTENTE_PROGRAMMÉE | wait | - |
+| Engagement signal | ACTION_RECOMMANDÉE | send_message | capitalize_success |
+| 14-30 days silence | ACTION_POSSIBLE | send_message | proactive_check_in |
+| 30+ days silence | ACTION_RECOMMANDÉE | send_message | customer_re_engagement |
+```
+
+**FORBIDDEN for ACTIVE_CUSTOMER:**
+- ❌ Any sales/prospecting language
+- ❌ Feature pitches
+- ❌ "Re-engagement" templates
+- ❌ "Ça fait longtemps" when < 30 days
+
+### STATUS → ACTION FINAL MAPPING
+
+```
+STATUT_TO_ACTION_MAP = {
+  "ATTENTE": {
+    "action": "wait",
+    "wait_type.type": "response_pending",
+    "urgency": "none"
+  },
+  "ATTENTE_PROGRAMMÉE": {
+    "action": "wait",
+    "wait_type.type": "meeting_scheduled",
+    "urgency": "none"
+  },
+  "ACTION_POSSIBLE": {
+    "action": "send_message",
+    "urgency": "low",
+    "content_style": "lighter_touch"
+  },
+  "ACTION_RECOMMANDÉE": {
+    "action": "send_message",
+    "urgency": "medium" OR "high",
+    "content_style": "standard"
+  },
+  "SUIVI_ACTIF": {
+    "action": "send_message",
+    "urgency": "low",
+    "content_style": "customer_success"
+  },
+  "SUIVI_LÉGER": {
+    "action": "send_message" OR "break_up",
+    "urgency": "low",
+    "content_style": "minimal"
+  }
+}
+```
+
+### OUTPUT: DEAL STATE CLASSIFICATION
+```json
+"deal_state_classification": {
+  "deal_state": "HAS_OPEN_DEAL",
+  "primary_deal": {
+    "deal_id": "456",
+    "dealstage": "Go Meeting Pro2LT",
+    "status": "OPEN"
+  },
+  "statut_determined": "ACTION_RECOMMANDÉE",
+  "statut_reason": "Last OUTBOUND was 8 days ago, no response",
+  "action_matrix_applied": "HAS_OPEN_DEAL",
+  "template_constraint": {
+    "allowed": ["sales_followup", "value_share", "meeting_proposal"],
+    "forbidden": ["re_engagement", "nurture", "win_back"]
+  }
+}
+```
+
+---
+
+====================
 🚨 PRIORITY 0: ACTIVE CUSTOMER SAFETY CHECK (EXECUTE FIRST)
 ====================
 

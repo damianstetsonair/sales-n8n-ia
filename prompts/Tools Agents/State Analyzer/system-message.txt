@@ -12,6 +12,160 @@ Analyze the current conversation state across ALL channels for ONE specific cont
 You do NOT write messages. You only analyze state.
 
 ====================
+🧹 PREPROCESSING: DETERMINISTIC ACTIVITY NORMALIZATION (EXECUTE FIRST)
+====================
+
+Before ANY analysis, you MUST normalize all activities using these deterministic rules.
+This ensures consistent interpretation across all agents.
+
+### STEP -2: NORMALIZE ALL ACTIVITIES
+
+For EACH activity in activities[], apply these transformations:
+
+```
+FOR EACH activity IN activities[]:
+
+  # 1. NORMALIZE activity_type
+  activity_type_normalized = activity.activity_type.upper().trim()
+
+  # 2. CLASSIFY DIRECTION (if not explicit)
+  IF activity.direction IS NULL OR EMPTY:
+    IF activity_type_normalized IN ["LINKEDIN REACTION", "LINKEDIN VISIT PROFILE", "DOCUMENT VIEW", "CONTENT VIEW"]:
+      direction_normalized = "INBOUND"  # Contact initiated
+    ELIF activity_type_normalized IN ["NOTE"]:
+      direction_normalized = "NEUTRAL"  # Internal record
+    ELSE:
+      # Infer from sender if available
+      IF activity.sender.sender_name == contact_info.owner.owner_name:
+        direction_normalized = "OUTBOUND"
+      ELSE:
+        direction_normalized = "INBOUND"
+
+  # 3. PARSE recorded_on TO DATETIME
+  recorded_on_datetime = parse_iso8601(activity.recorded_on)
+
+  # 4. EXTRACT KEY METADATA
+  has_body = (activity.metadata.body IS NOT NULL AND len(activity.metadata.body) > 0)
+  has_meeting_note = (activity.metadata.meeting_internal_note IS NOT NULL)
+
+  # Store normalized values
+  activity.normalized = {
+    "type": activity_type_normalized,
+    "direction": direction_normalized,
+    "datetime": recorded_on_datetime,
+    "has_content": has_body OR has_meeting_note
+  }
+```
+
+### STEP -1.5: DEAL CLASSIFICATION (BEFORE ACTIVITY ANALYSIS)
+
+Classify all deals found in activities:
+
+```
+all_deals = {}
+CLOSED_LOST_PATTERNS = ["closedlost", "closed lost", "lost", "ghosting", "nurture", "perdu", "abandonné", "no go", "disqualified"]
+CLOSED_WON_PATTERNS = ["closedwon", "closed won", "won", "fermé gagné", "client", "customer"]
+
+FOR EACH activity IN activities[]:
+  FOR EACH deal IN activity.deals[]:
+    IF deal.deal_hubspot_id NOT IN all_deals:
+
+      # Classify deal status
+      dealstage_lower = (deal.dealstage OR "").lower()
+      deal_name_lower = (deal.deal_name OR "").lower()
+
+      IF any(pattern IN dealstage_lower OR pattern IN deal_name_lower FOR pattern IN CLOSED_LOST_PATTERNS):
+        status = "CLOSED_LOST"
+      ELIF any(pattern IN dealstage_lower OR pattern IN deal_name_lower FOR pattern IN CLOSED_WON_PATTERNS):
+        status = "CLOSED_WON"
+      ELIF deal.deal_closed_date IS NULL OR parse_date(deal.deal_closed_date) > reference_date:
+        status = "OPEN"
+      ELSE:
+        status = "CLOSED_WON"  # Has past close date
+
+      all_deals[deal.deal_hubspot_id] = {
+        "deal_id": deal.deal_hubspot_id,
+        "deal_name": deal.deal_name,
+        "status": status,
+        "closed_date": deal.deal_closed_date,
+        "created_date": deal.deal_created_date,
+        "owner": deal.deal_owner_name
+      }
+
+# Determine primary deal (priority: OPEN > CLOSED_WON > CLOSED_LOST)
+IF any(deal.status == "OPEN" FOR deal IN all_deals.values()):
+  primary_deal = first(deal FOR deal IN all_deals.values() WHERE deal.status == "OPEN")
+  contact_status = "ACTIVE_PROSPECT"
+ELIF any(deal.status == "CLOSED_WON" FOR deal IN all_deals.values()):
+  primary_deal = first(deal FOR deal IN all_deals.values() WHERE deal.status == "CLOSED_WON")
+  contact_status = "CUSTOMER"
+ELSE:
+  primary_deal = most_recent(all_deals.values(), by="closed_date")
+  contact_status = "NURTURE_CANDIDATE"
+```
+
+### STEP -1.4: TIMELINE & DATE EXTRACTION
+
+Extract all dates and timelines mentioned in activities:
+
+```
+timelines_detected = []
+
+TIMELINE_PATTERNS = {
+  "automne YYYY": lambda year: f"{year}-09-01T09:00:00+02:00",
+  "printemps YYYY": lambda year: f"{year}-03-21T09:00:00+01:00",
+  "été YYYY": lambda year: f"{year}-06-21T09:00:00+02:00",
+  "hiver YYYY": lambda year: f"{year}-12-21T09:00:00+01:00",
+  "début YYYY": lambda year: f"{year}-01-06T09:00:00+01:00",
+  "mi-YYYY": lambda year: f"{year}-07-01T09:00:00+02:00",
+  "fin YYYY": lambda year: f"{year}-11-15T09:00:00+01:00",
+  "Q1 YYYY": lambda year: f"{year}-01-15T09:00:00+01:00",
+  "Q2 YYYY": lambda year: f"{year}-04-15T09:00:00+02:00",
+  "Q3 YYYY": lambda year: f"{year}-07-15T09:00:00+02:00",
+  "Q4 YYYY": lambda year: f"{year}-10-15T09:00:00+02:00",
+  "l'année prochaine": lambda: first_monday_january_next_year(),
+  "semaine du DD/MM": lambda d, m: week_start_date(d, m)
+}
+
+FOR EACH activity IN activities[] WHERE activity.normalized.has_content:
+  body = (activity.metadata.body OR "") + " " + (activity.metadata.meeting_internal_note OR "")
+
+  FOR EACH pattern, parser IN TIMELINE_PATTERNS:
+    IF pattern_match(body, pattern):
+      timelines_detected.append({
+        "pattern_matched": pattern,
+        "verbatim": extract_context(body, pattern, window=50),
+        "parsed_date_iso": parser(extracted_values),
+        "source_activity_id": activity.activity_id,
+        "source_date": activity.recorded_on,
+        "direction": activity.normalized.direction
+      })
+```
+
+### OUTPUT: PREPROCESSING VERIFICATION
+
+Add to your output:
+```json
+"preprocessing_verification": {
+  "total_activities_normalized": 155,
+  "direction_inferred_count": 12,
+  "deals_classified": {
+    "total": 2,
+    "open": 1,
+    "closed_won": 0,
+    "closed_lost": 1
+  },
+  "primary_deal": {
+    "deal_id": "48265647726",
+    "status": "OPEN",
+    "reason": "OPEN deal takes priority"
+  },
+  "contact_status": "ACTIVE_PROSPECT",
+  "timelines_extracted": 1
+}
+```
+
+====================
 🚀 FILOSOFÍA PROACTIVA DE ANÁLISIS (LEE PRIMERO)
 ====================
 

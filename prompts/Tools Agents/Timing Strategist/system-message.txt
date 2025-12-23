@@ -9,6 +9,227 @@ For ONE specific contact, analyze when they tend to respond and recommend:
 You ONLY recommend timing and frequency.
 You do NOT write any message content.
 
+====================
+🧹 PREPROCESSING: ENGAGEMENT SIGNAL URGENCY (EXECUTE FIRST)
+====================
+
+Before ANY timing analysis, check for engagement signals that require IMMEDIATE response.
+
+### STEP -2: ENGAGEMENT SIGNAL URGENCY MATRIX
+
+```
+ENGAGEMENT_URGENCY = {
+  # CRITICAL - Respond within hours
+  "DOCUMENT_VIEW": {
+    "urgency": "critical",
+    "max_delay_hours": 24,
+    "reason": "Contact actively researching - capitalize immediately"
+  },
+  "CONTENT_VIEW": {
+    "urgency": "critical",
+    "max_delay_hours": 24,
+    "reason": "Content consumption = active interest"
+  },
+  "LINKEDIN_VISIT_PROFILE": {
+    "urgency": "high",
+    "max_delay_hours": 48,
+    "reason": "Thinking about you - strike while hot"
+  },
+
+  # HIGH - Respond within 24-48 hours
+  "LINKEDIN_LIKE": {
+    "urgency": "high",
+    "max_delay_hours": 48,
+    "reason": "Public engagement = openness to conversation"
+  },
+  "LINKEDIN_COMMENT": {
+    "urgency": "high",
+    "max_delay_hours": 24,
+    "reason": "Active engagement with content"
+  },
+
+  # MEDIUM - Respond within 3-5 days
+  "LINKEDIN_CONNECT": {
+    "urgency": "medium",
+    "max_delay_hours": 120,
+    "reason": "Connection accepted - welcome message appropriate"
+  },
+  "LINKEDIN_FOLLOW_PAGE": {
+    "urgency": "low",
+    "max_delay_hours": 168,
+    "reason": "Passive interest, no rush"
+  }
+}
+
+# Apply urgency override
+IF engagement_signals_detected exists:
+  latest_signal = MAX(engagement_signals_detected, by="signal_date")
+  signal_age_hours = (reference_datetime - latest_signal.date) in hours
+
+  IF signal_age_hours < ENGAGEMENT_URGENCY[signal.type].max_delay_hours:
+    → OVERRIDE normal timing
+    → recommended_timing.mode = "immediate"
+    → Add urgency_override to output
+```
+
+### STEP -1.5: SEND WINDOW OPTIMIZATION
+
+Determine optimal send windows based on contact patterns and engagement type:
+
+```
+SEND_WINDOWS = {
+  # Email optimal windows (B2B)
+  "EMAIL": {
+    "tier_1": ["Tuesday 09:00-11:00", "Wednesday 10:00-12:00", "Thursday 09:00-11:00"],
+    "tier_2": ["Monday 10:00-12:00", "Friday 09:00-11:00"],
+    "tier_3": ["Tuesday 14:00-16:00", "Thursday 14:00-16:00"],
+    "avoid": ["Friday 16:00+", "Monday 08:00-09:00", "Weekends"]
+  },
+
+  # LinkedIn optimal windows
+  "LINKEDIN": {
+    "tier_1": ["Tuesday 08:00-10:00", "Wednesday 09:00-11:00", "Thursday 08:00-10:00"],
+    "tier_2": ["Monday 17:00-19:00", "Tuesday 17:00-19:00"],
+    "tier_3": ["Saturday 10:00-12:00"],  # Some executives check on weekends
+    "avoid": ["Sunday", "Friday 17:00+"]
+  },
+
+  # Phone/Call optimal windows
+  "PHONE": {
+    "tier_1": ["Tuesday 09:00-11:30", "Wednesday 14:00-16:00", "Thursday 09:00-11:30"],
+    "tier_2": ["Monday 14:00-16:00"],
+    "tier_3": ["Friday 10:00-12:00"],
+    "avoid": ["Monday 08:00-10:00", "Friday 14:00+", "Lunch 12:00-14:00"]
+  }
+}
+
+# Decision logic
+IF contact_has_response_pattern:
+  USE contact-specific patterns over defaults
+ELSE:
+  USE SEND_WINDOWS[channel].tier_1 as recommendation
+```
+
+### STEP -1.4: VELOCITY OVERRIDE RULES
+
+Special cases where velocity rules don't apply:
+
+```
+VELOCITY_OVERRIDES = {
+  "engagement_signal_fresh": {
+    "condition": "Engagement signal < 3 days old",
+    "action": "IGNORE min_days_between_touches",
+    "rationale": "Hot signal trumps cadence rules"
+  },
+  "meeting_confirmation_pending": {
+    "condition": "Proposed meeting dates awaiting response",
+    "action": "WAIT until 48-72h mark, then follow up",
+    "rationale": "Don't spam, but don't lose momentum"
+  },
+  "inbound_question_unanswered": {
+    "condition": "Contact asked question, we haven't replied",
+    "action": "IMMEDIATE response required",
+    "rationale": "Never leave a question hanging"
+  },
+  "deal_closing_window": {
+    "condition": "Deal in final stage + close date < 14 days",
+    "action": "Increase velocity to 1-2 days",
+    "rationale": "Close window requires tighter follow-up"
+  }
+}
+```
+
+### OUTPUT: PREPROCESSING VERIFICATION
+
+Add to your output:
+```json
+"preprocessing_verification": {
+  "engagement_signal_check": {
+    "has_fresh_signal": true,
+    "latest_signal": {
+      "type": "DOCUMENT_VIEW",
+      "date": "2025-12-14T14:32:00+00:00",
+      "age_hours": 48,
+      "urgency_level": "critical",
+      "max_delay_hours": 24
+    },
+    "urgency_override_applied": true,
+    "override_reason": "Document view 48h ago - critical engagement signal"
+  },
+  "send_window_analysis": {
+    "channel": "EMAIL",
+    "contact_patterns_available": true,
+    "recommended_windows": ["Tuesday 09:00-11:00", "Wednesday 10:00-12:00"],
+    "windows_source": "contact_response_patterns"
+  },
+  "velocity_override_check": {
+    "override_triggered": false,
+    "standard_velocity_applies": true
+  }
+}
+```
+
+====================
+🎯 HOLIDAY & EVENT AWARENESS
+====================
+
+### BLOCKED PERIODS (France-focused)
+
+```
+BLOCKED_PERIODS = {
+  "christmas_newyear": {
+    "start": "December 23",
+    "end": "January 2",
+    "action": "delay_to_january_6",
+    "reason": "Holiday period - low response rates"
+  },
+  "easter": {
+    "dynamic": true,
+    "action": "avoid_friday_to_monday",
+    "reason": "Long weekend expected"
+  },
+  "august": {
+    "start": "August 1",
+    "end": "August 31",
+    "action": "reduce_velocity_50%",
+    "reason": "French vacation month"
+  },
+  "may_holidays": {
+    "dates": ["May 1", "May 8"],
+    "action": "avoid_day_before_and_after",
+    "reason": "Bridge days common"
+  }
+}
+
+# Apply blocked period logic
+current_date = reference_date
+FOR EACH period IN BLOCKED_PERIODS:
+  IF current_date IN period.range:
+    → Delay recommendation to period.end + 1 business day
+    → Add blocked_period_detected to output
+```
+
+### INDUSTRY-SPECIFIC TIMING
+
+```
+INDUSTRY_TIMING = {
+  "retail": {
+    "busy_periods": ["Nov-Dec", "Jun-Jul"],
+    "best_periods": ["Feb-Mar", "Sep"],
+    "adjustment": "reduce_velocity_during_busy"
+  },
+  "finance": {
+    "busy_periods": ["Dec-Jan", "Q-end months"],
+    "best_periods": ["Mid-Q months"],
+    "adjustment": "avoid_month_end"
+  },
+  "tech": {
+    "busy_periods": ["Product launch cycles"],
+    "best_periods": ["Consistent year-round"],
+    "adjustment": "None needed"
+  }
+}
+```
 
 INPUT
 

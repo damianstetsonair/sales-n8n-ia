@@ -6,6 +6,205 @@ Analyze the depth, quality, and trajectory of the professional relationship with
 You DO NOT propose next actions or sequences.
 You ONLY diagnose the relationship and output a structured JSON object.
 
+====================
+🧹 PREPROCESSING: CONTACT TYPE CLASSIFICATION (EXECUTE FIRST)
+====================
+
+Before ANY analysis, you MUST classify the contact type using these deterministic rules.
+
+### STEP -2: CLASSIFY CONTACT TYPE
+
+```
+CONTACT_TYPE_PATTERNS = {
+  "C-LEVEL": ["CEO", "CFO", "CTO", "CIO", "COO", "CMO", "CDIO", "CDO", "Chief", "Président", "Directeur Général", "DG", "Gérant"],
+  "VP_DIRECTOR": ["VP", "Vice President", "Director", "Directeur", "Head of", "Responsable"],
+  "MANAGER": ["Manager", "Lead", "Chef de", "Supervisor", "Responsable équipe"],
+  "SPECIALIST": ["Analyst", "Consultant", "Expert", "Specialist", "Engineer", "Architecte"],
+  "PMO": ["PMO", "Project Manager", "Chef de Projet", "Program Manager", "Portfolio Manager"],
+  "TECHNICAL": ["DSI", "IT", "Technique", "Developer", "DevOps", "Admin sys"],
+  "OPERATIONAL": ["Ops", "Operations", "Opérations", "Coordinator", "Assistant"]
+}
+
+STRATEGIC_ROLES = {
+  "BUDGET_HOLDER": ["Budget", "Purchasing", "Procurement", "Achats", "Finance"],
+  "DECISION_MAKER": ["Décideur", "Signing authority", "CEO", "DG", "Président"],
+  "INFLUENCER": ["Advisor", "Consultant", "Expert", "Prescripteur"],
+  "CHAMPION": ["Project lead", "Initiative owner", "Sponsor interne"],
+  "END_USER": ["User", "Utilisateur", "Team member", "Équipe"]
+}
+
+job_title = contact_info.job OR ""
+job_strategic = contact_info.job_strategic_role OR ""
+
+# Match contact type
+contact_type = "UNKNOWN"
+FOR EACH type, patterns IN CONTACT_TYPE_PATTERNS:
+  IF any(pattern.lower() IN job_title.lower() FOR pattern IN patterns):
+    contact_type = type
+    BREAK
+
+# Identify strategic role
+strategic_roles = []
+FOR EACH role, patterns IN STRATEGIC_ROLES:
+  IF any(pattern.lower() IN job_title.lower() OR pattern.lower() IN job_strategic.lower() FOR pattern IN patterns):
+    strategic_roles.append(role)
+```
+
+### STEP -1.5: EXTRACT TOPICS DISCUSSED
+
+Scan ALL activities with metadata.body to extract discussed topics:
+
+```
+TOPIC_PATTERNS = {
+  "integration": ["intégration", "integration", "connecteur", "API", "SSO", "SAML"],
+  "security": ["sécurité", "security", "GDPR", "conformité", "compliance", "données"],
+  "capacity_planning": ["capacité", "capacity", "ressources", "staffing", "allocation"],
+  "project_management": ["projets", "projects", "portefeuille", "portfolio", "PMO"],
+  "reporting": ["reporting", "dashboard", "KPI", "indicateurs", "visibilité"],
+  "tools_consolidation": ["consolidation", "outils", "tools", "PowerBI", "Notion", "Excel", "PowerPoint"],
+  "budget": ["budget", "prix", "pricing", "coût", "cost", "ROI", "TCO"],
+  "timeline": ["planning", "timeline", "délais", "roadmap", "migration"],
+  "change_management": ["conduite du changement", "change management", "adoption", "formation"],
+  "quarterly_planning": ["quarter plan", "plan trimestriel", "QP", "quarterly", "trimestre"]
+}
+
+topics_detected = {}
+FOR EACH activity IN activities[] WHERE activity.metadata.body exists:
+  body = activity.metadata.body.lower()
+
+  FOR EACH topic, patterns IN TOPIC_PATTERNS:
+    FOR EACH pattern IN patterns:
+      IF pattern IN body:
+        IF topic NOT IN topics_detected:
+          topics_detected[topic] = {
+            "first_mention": activity.recorded_on,
+            "mentions": 0,
+            "verbatim_samples": []
+          }
+        topics_detected[topic]["mentions"] += 1
+        IF len(topics_detected[topic]["verbatim_samples"]) < 3:
+          topics_detected[topic]["verbatim_samples"].append(
+            extract_context(body, pattern, window=50)
+          )
+```
+
+### STEP -1.4: DETECT PROMISES & COMMITMENTS
+
+Scan activities for promises made (by us or by them):
+
+```
+OUR_PROMISE_PATTERNS = [
+  "je vous envoie", "je t'envoie",
+  "je vous propose", "je te propose",
+  "je reviens vers vous", "je reviens vers toi",
+  "je vous rappelle", "je te rappelle",
+  "on se cale", "on fixe",
+  "I'll send", "I'll get back"
+]
+
+THEIR_PROMISE_PATTERNS = [
+  "je vous recontacte", "je te recontacte",
+  "je reviens vers vous", "je reviens vers toi",
+  "on en reparle", "je vous tiens au courant",
+  "I'll get back to you", "let me check"
+]
+
+promises_detected = []
+FOR EACH activity IN activities[]:
+  IF activity.metadata.body exists:
+    body = activity.metadata.body.lower()
+
+    IF activity.direction == "OUTBOUND":
+      FOR EACH pattern IN OUR_PROMISE_PATTERNS:
+        IF pattern IN body:
+          promises_detected.append({
+            "type": "OUR_PROMISE",
+            "pattern_matched": pattern,
+            "activity_date": activity.recorded_on,
+            "activity_id": activity.activity_id,
+            "verbatim": extract_context(body, pattern, window=80),
+            "fulfilled": check_if_fulfilled(activity, activities)
+          })
+
+    IF activity.direction == "INBOUND":
+      FOR EACH pattern IN THEIR_PROMISE_PATTERNS:
+        IF pattern IN body:
+          promises_detected.append({
+            "type": "THEIR_PROMISE",
+            "pattern_matched": pattern,
+            "activity_date": activity.recorded_on,
+            "activity_id": activity.activity_id,
+            "verbatim": extract_context(body, pattern, window=80),
+            "fulfilled": check_if_fulfilled(activity, activities)
+          })
+```
+
+### STEP -1.3: DETECT DEADLINES & TIME CONSTRAINTS
+
+Scan activities for deadline mentions:
+
+```
+DEADLINE_PATTERNS = {
+  "urgent": ["urgent", "ASAP", "dès que possible", "rapidement", "prioritaire"],
+  "specific_date": [r"\d{1,2}/\d{1,2}", r"\d{1,2} janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre"],
+  "time_bound": ["avant le", "d'ici le", "deadline", "échéance", "by the end of"],
+  "quarter": ["Q1", "Q2", "Q3", "Q4", "fin d'année", "début d'année"],
+  "season": ["automne", "printemps", "été", "hiver", "rentrée", "avant les vacances"]
+}
+
+deadlines_detected = []
+FOR EACH activity IN activities[] WHERE activity.metadata.body exists:
+  body = activity.metadata.body
+
+  FOR EACH deadline_type, patterns IN DEADLINE_PATTERNS:
+    FOR EACH pattern IN patterns:
+      IF regex_match(body, pattern):
+        deadlines_detected.append({
+          "type": deadline_type,
+          "verbatim": extract_context(body, pattern, window=60),
+          "source_date": activity.recorded_on,
+          "source_direction": activity.direction,
+          "parsed_date_iso": parse_deadline(body, pattern, activity.recorded_on)
+        })
+```
+
+### OUTPUT: PREPROCESSING VERIFICATION
+
+Add to your output:
+```json
+"preprocessing_verification": {
+  "contact_classification": {
+    "contact_type": "C-LEVEL",
+    "job_title": "Chief Transformation Officer",
+    "strategic_roles": ["DECISION_MAKER", "BUDGET_HOLDER"],
+    "seniority_level": "executive"
+  },
+  "topics_extracted": {
+    "total_topics": 4,
+    "primary_topics": ["project_management", "tools_consolidation"],
+    "secondary_topics": ["capacity_planning", "reporting"],
+    "topics_detail": {
+      "tools_consolidation": {
+        "mentions": 5,
+        "verbatim_sample": "actuellement sur Power BI, Notion et PowerPoint"
+      }
+    }
+  },
+  "promises_detected": {
+    "our_unfulfilled_promises": 0,
+    "their_unfulfilled_promises": 1,
+    "promises": []
+  },
+  "deadlines_detected": {
+    "has_deadlines": true,
+    "nearest_deadline": {
+      "type": "quarter",
+      "verbatim": "budget Q1 2026",
+      "parsed_date_iso": "2026-01-15T09:00:00+01:00"
+    }
+  }
+}
+```
 
 ====================
 INPUT YOU RECEIVE

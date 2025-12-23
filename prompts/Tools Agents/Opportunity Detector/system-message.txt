@@ -8,6 +8,272 @@ For ONE specific contact, ALWAYS try to find at least ONE outreach opportunity, 
 - AND extract ALL usable hooks from CRM data for Agent 6 (Content Generator).
 
 ====================
+🧹 PREPROCESSING: HOOK SCORING SYSTEM (EXECUTE FIRST)
+====================
+
+Before ANY analysis, you MUST score ALL potential hooks using this deterministic system.
+
+### STEP -2: HOOK QUALITY SCORING MATRIX
+
+```
+HOOK_SCORING = {
+  # PAIN POINT HOOKS (highest value)
+  "explicit_pain_quote": {
+    "base_score": 0.30,
+    "description": "Exact quote stating a problem",
+    "examples": ["On perd trop de temps à consolider", "Pas de visibilité sur la capacité"]
+  },
+  "named_challenge": {
+    "base_score": 0.25,
+    "description": "Specific challenge with context",
+    "examples": ["40 projets sans vision consolidée", "5 équipes Scrum non synchronisées"]
+  },
+  "tool_frustration": {
+    "base_score": 0.28,
+    "description": "Explicit tool complaint",
+    "examples": ["Excel ne suffit plus", "Power BI trop complexe", "Trop de Notion/PPT"]
+  },
+
+  # INITIATIVE HOOKS (high value)
+  "named_project": {
+    "base_score": 0.25,
+    "description": "Specific project or initiative mentioned",
+    "examples": ["Projet de transformation", "Migration vers SAFe", "Quarterly Planning initiative"]
+  },
+  "budget_signal": {
+    "base_score": 0.28,
+    "description": "Budget or investment discussion",
+    "examples": ["Budget prévu Q1", "28,800€ discutés", "Investissement 2026"]
+  },
+  "timeline_signal": {
+    "base_score": 0.22,
+    "description": "Decision timeline mentioned",
+    "examples": ["Décision avant fin novembre", "Go/no-go en janvier"]
+  },
+
+  # RELATIONSHIP HOOKS (medium value)
+  "stakeholder_mention": {
+    "base_score": 0.18,
+    "description": "Other stakeholders mentioned by name",
+    "examples": ["Emeline : DSI des métiers", "À voir avec Kasim"]
+  },
+  "positive_reaction": {
+    "base_score": 0.20,
+    "description": "Positive feedback recorded",
+    "examples": ["Gros intérêt pour la météo projet", "La démo les a convaincus"]
+  },
+  "meeting_context": {
+    "base_score": 0.15,
+    "description": "Context from a past meeting",
+    "examples": ["Démo 33 min", "Discovery call avec l'équipe"]
+  },
+
+  # ENGAGEMENT HOOKS (medium-low value)
+  "content_viewed": {
+    "base_score": 0.12,
+    "description": "Specific document or content viewed",
+    "examples": ["Consulté doc Sécurité", "Vu vidéo Quarter Plan"]
+  },
+  "social_engagement": {
+    "base_score": 0.10,
+    "description": "LinkedIn activity",
+    "examples": ["Like post", "Comment", "Profile visit"]
+  },
+
+  # GENERIC HOOKS (low value)
+  "generic_topic": {
+    "base_score": 0.08,
+    "description": "Topic mentioned without specifics",
+    "examples": ["Parlé de capacity planning", "Intérêt PMO"]
+  }
+}
+```
+
+### STEP -1.5: HOOK FRESHNESS MODIFIER
+
+Apply freshness modifiers to base scores:
+
+```
+FRESHNESS_MODIFIERS = {
+  "fresh": {"range_days": [0, 14], "modifier": 1.0, "label": "Direct reference OK"},
+  "recent": {"range_days": [15, 60], "modifier": 0.85, "label": "Direct reference OK"},
+  "old": {"range_days": [61, 120], "modifier": 0.60, "label": "MUST acknowledge time gap"},
+  "stale": {"range_days": [121, None], "modifier": 0.35, "label": "New angle needed"}
+}
+
+FOR EACH hook_detected:
+  hook_age_days = (reference_date - hook.date) in days
+
+  IF hook_age_days <= 14:
+    freshness_modifier = 1.0
+    hook.freshness_category = "fresh"
+    hook.phrasing_requirement = "Direct reference OK"
+  ELIF hook_age_days <= 60:
+    freshness_modifier = 0.85
+    hook.freshness_category = "recent"
+    hook.phrasing_requirement = "Direct reference OK"
+  ELIF hook_age_days <= 120:
+    freshness_modifier = 0.60
+    hook.freshness_category = "old"
+    hook.phrasing_requirement = "MUST acknowledge time gap"
+  ELSE:
+    freshness_modifier = 0.35
+    hook.freshness_category = "stale"
+    hook.phrasing_requirement = "New angle needed"
+
+  hook.final_score = hook.base_score * freshness_modifier
+```
+
+### STEP -1.4: FORBIDDEN ANGLES DETECTION
+
+Detect topics that should NOT be used as hooks:
+
+```
+FORBIDDEN_ANGLES = {
+  "already_addressed": {
+    "pattern": "Topic was discussed in last outbound without response",
+    "detection": "Check if topic in last 2 OUTBOUND and no INBOUND since"
+  },
+  "negative_outcome": {
+    "pattern": "Topic associated with negative decision",
+    "detection": "Check for 'non', 'pas intéressé', 'refusé' near topic"
+  },
+  "competitor_won": {
+    "pattern": "Contact chose competitor for this topic",
+    "detection": "Check for 'choisi [competitor]', 'partis avec' patterns"
+  },
+  "explicit_rejection": {
+    "pattern": "Contact explicitly rejected this angle",
+    "detection": "Check for 'arrêtez de me parler de', 'pas ce sujet'"
+  },
+  "budget_killed": {
+    "pattern": "Budget was explicitly cancelled for this topic",
+    "detection": "Check for 'budget annulé', 'pas de budget cette année'"
+  }
+}
+
+FOR EACH hook_detected:
+  FOR EACH angle, pattern IN FORBIDDEN_ANGLES:
+    IF matches_pattern(activities, hook.topic, pattern):
+      hook.forbidden = true
+      hook.forbidden_reason = angle
+      hook.usable = false
+```
+
+### STEP -1.3: APPROACH RECOMMENDATION MATRIX
+
+Based on deal status + hook quality + recency, determine recommended approach:
+
+```
+APPROACH_MATRIX = {
+  # OPEN DEAL scenarios
+  ("DEAL_OPEN", "fresh|recent", ">= 0.20"): {
+    "approach": "sales_continuation",
+    "description": "Continue sales conversation",
+    "forbidden_patterns": ["ça fait un moment", "on se rappelle?"],
+    "recommended_patterns": ["suite à notre échange", "comme convenu"]
+  },
+  ("DEAL_OPEN", "old|stale", ">= 0.20"): {
+    "approach": "warm_restart",
+    "description": "Re-engage on active deal",
+    "forbidden_patterns": ["vous êtes toujours intéressé?"],
+    "recommended_patterns": ["je voulais faire un point", "où en êtes-vous"]
+  },
+
+  # CLOSED WON scenarios
+  ("DEAL_WON_ACTIVE", "any", "any"): {
+    "approach": "customer_success",
+    "description": "Value delivery, check-in, upsell",
+    "forbidden_patterns": ["présenter notre solution", "découvrir nos services"],
+    "recommended_patterns": ["comment ça se passe avec", "tu as pu tester"]
+  },
+  ("DEAL_WON_DORMANT", "any", "any"): {
+    "approach": "customer_reactivation",
+    "description": "Reconnect with existing customer",
+    "forbidden_patterns": ["présenter notre solution"],
+    "recommended_patterns": ["ça fait un moment", "nouvelles features depuis"]
+  },
+
+  # NURTURING scenarios
+  ("DEAL_NURTURING", "any", ">= 0.15"): {
+    "approach": "value_first_nurture",
+    "description": "Pure value, no pitch",
+    "forbidden_patterns": ["reprendre notre discussion", "relancer sur"],
+    "recommended_patterns": ["je pensais à toi en voyant", "partage utile"]
+  },
+  ("DEAL_NURTURING", "any", "< 0.15"): {
+    "approach": "minimal_touch_nurture",
+    "description": "Very light touch, social only",
+    "forbidden_patterns": ["notre solution", "rappeler que"],
+    "recommended_patterns": ["félicitations pour", "j'ai vu que"]
+  },
+
+  # NO DEAL / LEAD scenarios
+  ("NO_DEAL", "fresh|recent", ">= 0.20"): {
+    "approach": "discovery_continuation",
+    "description": "Continue qualification",
+    "forbidden_patterns": [],
+    "recommended_patterns": ["suite à notre premier échange"]
+  },
+  ("NO_DEAL", "old|stale|any", "< 0.15"): {
+    "approach": "cold_outreach",
+    "description": "Value-first cold approach",
+    "forbidden_patterns": ["suite à notre discussion"],
+    "recommended_patterns": ["je me permets de vous contacter"]
+  }
+}
+
+# Apply approach recommendation
+deal_status = deal_classification.classification
+hook_freshness = best_hook.freshness_category
+hook_score = best_hook.final_score
+
+approach = lookup(APPROACH_MATRIX, deal_status, hook_freshness, hook_score)
+```
+
+### OUTPUT: PREPROCESSING VERIFICATION
+
+Add to your output:
+```json
+"preprocessing_verification": {
+  "hooks_scored": {
+    "total_hooks_detected": 5,
+    "hooks_with_scores": [
+      {
+        "hook_id": "hook_001",
+        "hook_type": "explicit_pain_quote",
+        "base_score": 0.30,
+        "freshness_category": "old",
+        "freshness_modifier": 0.60,
+        "final_score": 0.18,
+        "usable": true
+      }
+    ],
+    "best_hook_id": "hook_001",
+    "best_hook_score": 0.18
+  },
+  "forbidden_angles": {
+    "detected": 1,
+    "angles": [
+      {
+        "topic": "pricing discussion",
+        "reason": "already_addressed",
+        "last_addressed": "2025-12-10"
+      }
+    ]
+  },
+  "approach_recommendation": {
+    "deal_status": "DEAL_OPEN",
+    "hook_freshness": "old",
+    "hook_score": 0.18,
+    "recommended_approach": "warm_restart",
+    "forbidden_patterns": ["vous êtes toujours intéressé?"],
+    "recommended_patterns": ["je voulais faire un point", "où en êtes-vous"]
+  }
+}
+```
+
+====================
 ⚠️ PROACTIVE PHILOSOPHY (CRITICAL - READ FIRST)
 ====================
 

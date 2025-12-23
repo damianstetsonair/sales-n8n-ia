@@ -5,6 +5,152 @@ You have TWO responsibilities:
 1. **EXECUTE Wave 2**: Call the 3 action tools and capture results
 2. **DECIDE**: Continue to Synthesis or retry Wave 1
 
+====================
+🔒 PART 7: 100-POINT SCORING GRID (MANDATORY EVALUATION FRAMEWORK)
+====================
+
+### STEP 0: CRITICAL SIGNAL PRE-CHECK
+```
+⚠️ BEFORE any scoring, check for CRITICAL SIGNALS:
+
+CRITICAL_SIGNAL_PRECHECK:
+1. Churn detected → ABORT scoring, action = "no_action"
+2. Meeting already scheduled → ABORT scoring, action = "wait"
+3. Activity < 14 days + deal won → Customer is ACTIVE, NOT dormant
+
+IF ANY critical signal found:
+  - Skip quality scoring
+  - Force appropriate action
+  - Document in issues_found with severity = "critical"
+```
+
+### MASTER SCORING GRID (100 POINTS TOTAL)
+
+```
+SECTION A: PREPROCESSING ACCURACY (25 points)
+├─ A1: Activity Scan Completeness (10 pts)
+│   ├─ All activities scanned (not just first/last) → +5
+│   ├─ days_since_last_activity matches reality → +3
+│   └─ Multi-deal handling correct → +2
+│
+├─ A2: Critical Signal Detection (10 pts)
+│   ├─ Churn signals detected if present → +4
+│   ├─ Meeting cancellations detected → +3
+│   └─ Future timing extracted → +3
+│
+└─ A3: Input Data Integrity (5 pts)
+    ├─ All agents received same input → +3
+    └─ No data corruption between waves → +2
+
+SECTION B: AGENT COHERENCE (25 points)
+├─ B1: Cross-Agent Consistency (15 pts)
+│   ├─ State vs Opportunity recency match → +5
+│   ├─ Context vs State relationship match → +5
+│   └─ Timing vs State urgency match → +5
+│
+└─ B2: Within-Agent Validity (10 pts)
+    ├─ opportunity_strength = calculated_total → +3
+    ├─ wait_type present when action = "wait" → +3
+    ├─ Evidence trails complete → +4
+
+SECTION C: DECISION QUALITY (25 points)
+├─ C1: Action Appropriateness (10 pts)
+│   ├─ Action matches statut decision tree → +5
+│   ├─ No forbidden patterns for contact state → +5
+│
+├─ C2: Content Quality (10 pts)
+│   ├─ Value density score >= 0.50 (re-engagement) → +4
+│   ├─ Stakeholders preserved → +3
+│   └─ Temporal references accurate → +3
+│
+└─ C3: Sequence Validity (5 pts)
+    ├─ Touches <= ghosting limit → +2
+    ├─ Cadence respects velocity → +2
+    └─ Exit conditions defined → +1
+
+SECTION D: OUTPUT COMPLIANCE (25 points)
+├─ D1: Schema Adherence (10 pts)
+│   ├─ All required fields present → +5
+│   ├─ Valid JSON structure → +3
+│   └─ ISO8601 timestamps → +2
+│
+├─ D2: Evidence Requirements (10 pts)
+│   ├─ json_path for every claim → +5
+│   └─ No invented/hallucinated facts → +5
+│
+└─ D3: Business Rules Compliance (5 pts)
+    ├─ Signature matches deal owner → +2
+    ├─ Location-based meeting type → +2
+    └─ Language detection → +1
+```
+
+### SCORING THRESHOLDS
+```
+| Score Range | Action | Description |
+|-------------|--------|-------------|
+| 90-100 | continue | Excellent - proceed to Synthesis |
+| 75-89 | continue | Good - minor issues logged |
+| 60-74 | retry_soft | Moderate issues - retry once if < max_iterations |
+| 40-59 | retry | Significant issues - retry with specific instructions |
+| 0-39 | retry_critical | Critical failures - must retry |
+```
+
+### ERROR CLASSIFICATION MATRIX
+
+```
+CRITICAL ERRORS (auto-fail, -25 points each):
+| Error | Detection | Auto-Action |
+|-------|-----------|-------------|
+| Active customer as dormant | days_since < 14 + "re_engagement" | ABORT + retry |
+| Sales content for churned | churn_detected + content generated | ABORT + retry |
+| Meeting scheduled ignored | has_upcoming_meeting + send_message | ABORT + retry |
+| Activity scan incomplete | agents disagree on recency | ABORT + retry |
+
+HIGH SEVERITY (-10 points each):
+| Error | Detection |
+|-------|-----------|
+| Recency mismatch between agents | > 30 day difference |
+| Missing wait_type when action=wait | wait_type = null |
+| Value density < 0.50 for re-engagement | value_density_score.score < 0.50 |
+| Resource match_score < 0.35 included | any resource below threshold |
+
+MEDIUM SEVERITY (-5 points each):
+| Error | Detection |
+|-------|-----------|
+| Stakeholders not mentioned | stakeholder_count > 1, none in message |
+| Generic resource over specific | lower specificity selected |
+| LinkedIn URL in cold message | URL present + relationship < 7.0 |
+| Missing evidence trail | claim without json_path |
+
+LOW SEVERITY (-2 points each):
+| Error | Detection |
+|-------|-----------|
+| URL strategy not documented | linkedin_url_handling missing |
+| Suboptimal send window | outside tier_1 window |
+| Minor schema violations | optional fields missing |
+```
+
+### OUTPUT: quality_scores (UPDATED STRUCTURE)
+```json
+"quality_scores": {
+  "total_score": 85,
+  "section_scores": {
+    "preprocessing_accuracy": 22,
+    "agent_coherence": 25,
+    "decision_quality": 20,
+    "output_compliance": 18
+  },
+  "critical_errors_found": 0,
+  "high_severity_errors": 1,
+  "medium_severity_errors": 2,
+  "low_severity_errors": 3,
+  "score_breakdown": [
+    {"item": "A1: Activity scan complete", "points": 10, "max": 10},
+    {"item": "A2: Churn signal missed", "points": 0, "max": 10, "deduction_reason": "Churn email not detected"}
+  ]
+}
+```
+
 ---
 
 ## PHASE 1: CALL WAVE 2 TOOLS

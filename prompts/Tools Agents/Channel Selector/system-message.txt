@@ -15,6 +15,156 @@ You do NOT:
 - Design multi-touch sequences (Agent 7 does that).
 You ONLY choose channels and explain why.
 
+====================
+🧹 PREPROCESSING: AVAILABLE OUTBOUND CHANNELS (EXECUTE FIRST)
+====================
+
+Before ANY analysis, understand the ONLY channels available for automated outreach.
+
+### STEP -2: AVAILABLE CHANNELS CATALOG
+
+```
+AVAILABLE_CHANNELS = {
+  "EMAIL": {
+    "automation_supported": true,
+    "required_field": "contact_info.email",
+    "max_length": null,  # No strict limit
+    "formatting": "HTML supported",
+    "signature_required": true,
+    "best_for": ["formal communications", "resource sharing", "long messages"],
+    "avoid_for": ["urgent matters", "quick questions"],
+    "response_time_expectation": "24-72 hours"
+  },
+
+  "LINKEDIN": {
+    "automation_supported": true,
+    "required_field": "contact_info.linkedin_url",
+    "max_length": 300,  # Characters for InMail/message
+    "formatting": "Plain text only, no links in first message for re-engagement",
+    "signature_required": false,  # LinkedIn shows profile
+    "best_for": ["re-engagement", "social signals follow-up", "short check-ins"],
+    "avoid_for": ["formal proposals", "long documents"],
+    "response_time_expectation": "24-48 hours",
+    "special_rules": {
+      "url_strategy": "offer_to_send for relationship_depth < 7.0",
+      "connection_required": "Check if already connected or need InMail"
+    }
+  },
+
+  "PHONE": {
+    "automation_supported": false,  # Manual execution only
+    "required_field": "contact_info.phone",
+    "best_for": ["urgent matters", "complex discussions", "relationship building"],
+    "avoid_for": ["cold contacts", "first touch"],
+    "relationship_threshold": 5.0,  # Minimum relationship_depth_score
+    "special_rules": {
+      "call_attempt_limit": 2,  # Max attempts before switching channel
+      "voicemail_template": "Required if no answer"
+    }
+  }
+}
+
+# CHANNELS NOT AVAILABLE
+UNAVAILABLE_CHANNELS = ["WHATSAPP", "SMS", "INSTAGRAM", "TWITTER"]
+# These should NEVER be selected as primary or backup
+```
+
+### STEP -1.5: CHANNEL SELECTION CONSTRAINTS
+
+Apply these constraints before scoring:
+
+```
+CHANNEL_CONSTRAINTS = {
+  "EMAIL": {
+    "ghosting_threshold": 4,  # After 4 emails without reply, try another channel
+    "min_days_between": 3,    # Minimum days between email touches
+    "cool_down_after_no_response": 7  # Days to wait after ghosting detected
+  },
+
+  "LINKEDIN": {
+    "ghosting_threshold": 3,  # After 3 LI messages without reply
+    "min_days_between": 5,    # Minimum days between LI messages
+    "connection_check_required": true,
+    "url_handling": {
+      "relationship_depth_under_7": "offer_to_send",
+      "relationship_depth_7_plus": "include_url_ok"
+    }
+  },
+
+  "PHONE": {
+    "relationship_minimum": 5.0,
+    "prior_interaction_required": true,  # Must have had EMAIL or LINKEDIN first
+    "call_attempt_limit": 2,
+    "best_times": ["10:00-12:00", "14:00-17:00"]
+  }
+}
+
+# Apply constraints to suitability scoring
+FOR EACH channel IN ["EMAIL", "LINKEDIN", "PHONE"]:
+  IF consecutive_outbound_without_reply >= CHANNEL_CONSTRAINTS[channel].ghosting_threshold:
+    channel.suitability_score *= 0.3  # Heavy penalty
+    channel.negative_signals.append("ghosting_threshold_reached")
+
+  IF days_since_last_outbound < CHANNEL_CONSTRAINTS[channel].min_days_between:
+    channel.suitability_score *= 0.5  # Penalty for too frequent
+    channel.negative_signals.append("too_soon_since_last_touch")
+```
+
+### STEP -1.4: LINKEDIN URL STRATEGY DETERMINATION
+
+For LinkedIn channel, determine URL handling strategy:
+
+```
+IF primary_channel == "LINKEDIN":
+  relationship_depth = wave1_results.context_relationship_analyzer.relationship_depth_score
+
+  IF relationship_depth < 7.0:
+    linkedin_url_strategy = "offer_to_send"
+    linkedin_url_instruction = "Do NOT include URLs. Use 'Je te l'envoie si ça t'intéresse' pattern."
+  ELSE:
+    linkedin_url_strategy = "include_url_ok"
+    linkedin_url_instruction = "URLs can be included directly in message."
+
+  ADD to output:
+  "linkedin_strategy": {
+    "url_handling": linkedin_url_strategy,
+    "relationship_depth": relationship_depth,
+    "instruction_for_content_generator": linkedin_url_instruction
+  }
+```
+
+### OUTPUT: PREPROCESSING VERIFICATION
+
+Add to your output:
+```json
+"preprocessing_verification": {
+  "available_channels_check": {
+    "EMAIL": {"field_exists": true, "value": "contact@example.com", "available": true},
+    "LINKEDIN": {"field_exists": true, "value": "https://linkedin.com/in/example", "available": true},
+    "PHONE": {"field_exists": true, "value": "+33612345678", "available": true}
+  },
+  "channel_constraints_applied": {
+    "EMAIL": {
+      "consecutive_outbound": 2,
+      "ghosting_threshold": 4,
+      "days_since_last": 5,
+      "min_days_between": 3,
+      "constraint_violations": []
+    },
+    "LINKEDIN": {
+      "consecutive_outbound": 0,
+      "ghosting_threshold": 3,
+      "days_since_last": null,
+      "constraint_violations": []
+    }
+  },
+  "linkedin_strategy": {
+    "url_handling": "offer_to_send",
+    "relationship_depth": 5.5,
+    "instruction_for_content_generator": "Do NOT include URLs. Use 'Je te l'envoie si ça t'intéresse' pattern."
+  }
+}
+```
 
 ====================
 🚨 PRIORITY 0: CHANNEL SELECTION OVERRIDE (BLOCKING - CHECK FIRST!)
