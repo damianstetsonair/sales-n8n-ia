@@ -35,10 +35,10 @@ sales-ia/
 
 1. Import `n8n-workflow.json` into n8n
 2. Configure Claude/Anthropic API credentials
-3. Trigger webhook at `/multi-agent-orchestrator` with contact data
+3. Trigger webhook at `/parallel-kam-agent` with contact data
 
 ```bash
-curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
+curl -X POST https://your-n8n/webhook/parallel-kam-agent \
   -H "Content-Type: application/json" \
   -d @webhook-input-contact-example.json
 ```
@@ -46,21 +46,28 @@ curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
 ## Architecture: 3-Wave Pipeline
 
 ```
-WAVE 1: ANALYSIS (Parallel)
-├── Agent 1: Context & Relationship Analyzer
-├── Agent 2: Opportunity Detector
-├── Agent 3: State Analyzer
-└── Agent 4: Timing Strategist
-    ↓ Distribution Orchestrator
+WAVE 1: ANALYSIS (Parallel Execution)
+├── Agent 1: Context & Relationship Analyzer (executeWorkflow)
+├── Agent 2: Opportunity Detector (executeWorkflow)
+├── Agent 3: State Analyzer (executeWorkflow)
+└── Agent 4: Timing Strategist (executeWorkflow)
+    ↓ Merge Wave1_results
+    ↓ Orchestrator Wave 1 Evaluation (validates accuracy)
+    ↓ Parse evaluation JSON
+    ↓ Retry Switch (continue or retry)
 
-WAVE 2: EXECUTION (Sequential)
-├── Agent 5: Channel Selector
-├── Agent 6: Content Generator
-└── Agent 7: Sequence Strategist
-    ↓ Evaluation Orchestrator
+WAVE 2: EXECUTION (Parallel Execution)
+├── Get historical recommendations (Supabase)
+├── Agent 5: Channel Selector (executeWorkflow)
+├── Agent 6: Content Generator (executeWorkflow)
+└── Agent 7: Sequence Strategist (executeWorkflow)
+    ↓ Merge Wave2_results
 
 WAVE 3: SYNTHESIS
-└── Final recommendation with channel, content, timing
+└── Orchestrator Synthesis (final decision maker)
+    ↓ Parse JSON
+    ↓ Save to Supabase
+    ↓ Notify via Slack/Zapier
 ```
 
 ## 🚨 V12.0 Active Customer Detection (CRITICAL FIX)

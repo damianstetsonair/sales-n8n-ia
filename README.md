@@ -11,13 +11,19 @@ Sales-IA analyzes CRM contacts and generates personalized outreach recommendatio
 ### High-Level Flow
 
 ```
-INPUT (Webhook POST)
-    → Validation + Constants
-    → WAVE 1 (4 Analysis Agents)
-    → Historical Data Fetch
-    → WAVE 2 (3 Action Agents + Quality Check)
-    → Retry Loop (max 2 iterations)
-    → WAVE 3 (Synthesis)
+INPUT (Webhook POST /parallel-kam-agent)
+    → Generate UUID + Respond to Webhook
+    → Save data call
+    → WAVE 1 (4 Analysis Agents called in parallel)
+    → Merge Wave1_results
+    → Orchestrator Wave 1 Evaluation
+    → Parse evaluation JSON
+    → Retry Switch (continue or retry)
+    → IF continue: Get historical recommendations + WAVE 2 (3 Action Agents)
+    → IF retry: Loop back to Generate UUID (max 3 iterations)
+    → Merge Wave2_results
+    → WAVE 3 (Orchestrator Synthesis)
+    → Parse JSON
     → Save to Supabase
     → Notify via Slack/Zapier
 ```
@@ -28,37 +34,43 @@ INPUT (Webhook POST)
 flowchart TB
     subgraph WAVE1["WAVE 1: ANALYSIS (Parallel)"]
         direction TB
-        OD["Orchestrator Distribution<br/>Claude Sonnet 4"]
-        T1["Context Analyzer"]
-        T2["Opportunity Detector"]
-        T3["State Analyzer"]
-        T4["Timing Strategist"]
-        T1 & T2 & T3 & T4 -->|"ai_tool"| OD
+        SDC["Save data call"]
+        T1["Call Context Analyzer<br/>executeWorkflow"]
+        T2["Call Opportunity Detector<br/>executeWorkflow"]
+        T3["Call State Analyzer<br/>executeWorkflow"]
+        T4["Call Timing Strategist<br/>executeWorkflow"]
+        M1["Wave1_results<br/>Merge"]
+        SDC --> T1 & T2 & T3 & T4
+        T1 & T2 & T3 & T4 --> M1
     end
 
-    subgraph WAVE2["WAVE 2: EXECUTION + QC"]
+    subgraph EVAL["WAVE 1 EVALUATION"]
+        OWE["Orchestrator Wave 1 Evaluation<br/>Claude Opus 4.5"]
+        SW{{"Retry Wave 1?<br/>Switch"}}
+        M1 --> OWE
+        OWE --> SW
+    end
+
+    subgraph WAVE2["WAVE 2: EXECUTION (Parallel)"]
         direction TB
-        OE["Orchestrator Evaluation<br/>Claude Opus 4.5"]
-        T5["Channel Selector"]
-        T6["Content Generator"]
-        T7["Sequence Strategist"]
-        T5 & T6 & T7 -->|"ai_tool"| OE
+        GH["Get historical recommendations"]
+        T5["Call channel selector<br/>executeWorkflow"]
+        T6["Call Content Generator<br/>executeWorkflow"]
+        T7["Call Sequence Strategist<br/>executeWorkflow"]
+        M2["Wave2_results<br/>Merge"]
+        SW -->|"continue"| GH & T5 & T7
+        GH --> T6
+        T5 & T6 & T7 --> M2
     end
 
     subgraph RETRY["RETRY LOGIC"]
-        QC{"Quality Check<br/>Scores ≥ 0.6?"}
-        PRC["Prepare Retry<br/>iteration++"]
+        SW -->|"retry"| LOOP["Loop to Generate UUID"]
     end
 
     subgraph WAVE3["WAVE 3: SYNTHESIS"]
         OS["Orchestrator Synthesis<br/>Claude Opus 4.5"]
+        M2 --> OS
     end
-
-    WAVE1 --> WAVE2
-    OE --> QC
-    QC -->|"No + iteration < 2"| PRC
-    PRC --> OD
-    QC -->|"Yes OR iteration ≥ 2"| WAVE3
 ```
 
 ### Decision Flow
@@ -144,7 +156,7 @@ sales-ia/
 4. Trigger webhook:
 
 ```bash
-curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
+curl -X POST https://your-n8n/webhook/parallel-kam-agent \
   -H "Content-Type: application/json" \
   -d @webhook-input-contact-example.json
 ```
@@ -197,4 +209,4 @@ Scans email bodies for contract termination signals:
 
 ## Execution Time
 
-~7 minutes per contact (async processing with immediate webhook response)
+~10 minutes per contact (async processing with immediate webhook response)

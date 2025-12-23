@@ -1,11 +1,30 @@
-=### WAVE 1 RESULTS (Analysis Phase):
-{{ $('Orchestrator Distribution').first().json.output }}
+==### WAVE 1 RESULTS (Analysis Phase):
+- Context Analyzer result:
+{{ $('Call Context Analyzer').all().first().json.output }}
+
+- Opportunity Detector result:
+{{ $('Call Opportunity Detector').all().first().json.output }}
+
+- State Analyzer result:
+{{ $('Call State Analyzer').all().first().json.output }}
+
+- Timing Strategist result:
+{{ $('Call Timing Strategist').all().first().json.output }}
+
 ---
 ### WAVE 2 RESULTS (Action Phase):
-{{ $('Orchestrator Evaluation').first().json.output }}
+- Content Generator result:
+{{ $('Call Content Generator').all().first().json.output }}
+
+- Channel selector result:
+{{ $('Call channel selector').all().first().json.output }}
+
+- Sequence Strategist result:
+{{ $('Call Sequence Strategist').all().first().json.output }}
+
 ---
 ### CONTACT INFO:
-{{ $('Input Validator').first().json.contact_info }}
+{{ $('Webhook').first().json.toJsonString() }}
 ---
 ### TODAY'S DATE: {{ $today.toString() }}
 ---

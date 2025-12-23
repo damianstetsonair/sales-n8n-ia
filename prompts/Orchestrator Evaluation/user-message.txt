@@ -1,94 +1,68 @@
-### INPUT - Wave 1 Results:
-{{ $('Orchestrator Distribution').first().json.output }}
----
-### HISTORICAL VALIDATED EXAMPLES (Learn from past successful decisions)
-{{ $('Get historial recomendations').item.json.toJsonString() ?? 'empty' }}
-
+ORIGINAL CONTACT DATA:
+{{ $('Webhook').first().json.toJsonString() }}
 ---
 
-## YOUR TASK
-
-1. **CALL ALL THREE TOOLS** (Channel Selector, Content Generator, Sequence Strategist)
-2. **EVALUATE** the quality of results
-3. **DECIDE**: continue or retry
-
-Current iteration: {{ $('Constants').first().json.iteration_count }} of {{ $('Constants').first().json.SEMANTIC_CONSTANTS.MAX_RETRY_ITERATIONS }}
+WAVE 1 RESULTS:
+{{ $('Wave1_results').item.json.toJsonString() }}
 
 ---
 
-## CRITICAL: Output this EXACT JSON structure
+Compare Wave 1 outputs against the original data. Verify factual accuracy, check for hallucinations, evaluate coherence. Decide: continue or retry?
 
-⚠️ PUT evaluation_decision FIRST - this is the most important field!
+---
+
+## OUTPUT FORMAT
+
+Return ONLY valid JSON (no markdown):
 
 {
-  "agent_id": "evaluation_orchestrator",
   "evaluation_decision": {
     "action": "continue",
-    "reasoning": "Brief explanation of why continue or retry",
+    "reasoning": "Brief explanation with specific references to original data",
     "retry_instructions": null
   },
-  "quality_scores": {
-    "wave1_coherence": 0.8,
-    "wave2_coherence": 0.8,
-    "cross_wave_alignment": 0.8
+  "fact_check": {
+    "verified": ["List of key facts correctly extracted"],
+    "errors": ["Any factual errors found"],
+    "missed": ["Important data from original that was not captured"]
   },
-  "wave2_results": {
-    "channel_selector": {
-      "recommended_channel": "EMAIL",
-      "fallback_channel": "LINKEDIN",
-      "confidence": 0.85
-    },
-    "content_generator": {
-      "should_generate": true,
-      "channels_with_content": ["EMAIL", "LINKEDIN"],
-      "signature_verified": true
-    },
-    "sequence_strategist": {
-      "is_sequence": false,
-      "sequence_type": "standalone",
-      "total_touches": 1
-    }
+  "quality_scores": {
+    "context_analyzer": 0.85,
+    "opportunity_detector": 0.80,
+    "state_analyzer": 0.90,
+    "timing_strategist": 0.85,
+    "factual_accuracy": 0.90
   },
   "issues_found": [],
-  "strengths_found": []
-}
-
----
-
-## DECISION RULES
-
-### Set action = "continue" when:
-- Results are coherent (scores >= 0.6)
-- No critical contradictions
-- iteration >= max iterations (MANDATORY)
-
-### Set action = "retry" when (AND iteration < max):
-- Critical contradictions between agents
-- Key data was missed
-- You can provide SPECIFIC retry_instructions
-
-### If retry, provide retry_instructions:
-{
-  "action": "retry",
-  "reasoning": "Specific reason",
-  "retry_instructions": {
-    "context_relationship_analyzer": "Specific instruction or null",
-    "opportunity_detector": "Specific instruction or null",
-    "state_analyzer": "Specific instruction or null",
-    "timing_strategist": "Specific instruction or null"
+  "wave1_summary": {
+    "relationship_stage": "qualified",
+    "temperature": "warm",
+    "who_has_ball": "us",
+    "action_needed": true,
+    "urgency": "medium",
+    "primary_opportunity": "type",
+    "primary_hook": "hook topic",
+    "recommended_channel": "EMAIL",
+    "wait_days": 3
   }
 }
 
----
+If retry:
+{
+  "evaluation_decision": {
+    "action": "retry",
+    "reasoning": "Specific reason with evidence",
+    "retry_instructions": {
+      "context_relationship_analyzer": "Instruction or null",
+      "opportunity_detector": "Instruction or null",
+      "state_analyzer": "Instruction or null",
+      "timing_strategist": "Instruction or null"
+    }
+  },
+  ...
+}
 
-## IMPORTANT RULES
-
-1. **evaluation_decision.action MUST be "continue" or "retry"** - no other values
-2. **If iteration >= max, action MUST be "continue"**
-3. **DO NOT include raw_output from tools** - only the extracted/summarized data
-4. **Keep the response concise** - avoid repeating full tool outputs
-
-⚠️ CRITICAL OUTPUT FORMAT:
-- PURE JSON only (no markdown, no ```)
-- Start with { and end with }
-- evaluation_decision MUST be near the top
+IMPORTANT: 
+- Output PURE JSON only, no markdown code blocks
+- Reference specific activities/dates from original data when verifying
+- Flag any information in Wave 1 outputs not found in original data
