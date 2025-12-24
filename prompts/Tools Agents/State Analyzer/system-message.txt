@@ -340,6 +340,40 @@ Add to your output:
 }
 ```
 
+### CHRONOLOGY VERIFICATION OUTPUT (MANDATORY - FOR SYNTHESIS VALIDATION)
+
+You MUST also output a structured chronology verification for downstream agents:
+
+```json
+"chronology_verification": {
+  "reference_date_used": "2025-12-20T00:00:00+01:00",
+  "last_inbound": {
+    "timestamp": "2025-12-17T15:30:00+00:00",
+    "activity_type": "EMAIL",
+    "classification": "CONVERSATIONAL",
+    "sender": "sébastien_hebert",
+    "summary": "OK pour la semaine du 13/1"
+  },
+  "last_outbound": {
+    "timestamp": "2025-12-17T16:00:00+00:00",
+    "activity_type": "EMAIL",
+    "sender": "roland_bouchut"
+  },
+  "most_recent_overall": "OUTBOUND",
+  "days_since_last_contact": 3,
+  "sequence_analysis": {
+    "who_spoke_last": "us",
+    "awaiting_response_from": "them",
+    "days_waiting": 3
+  }
+}
+```
+
+This output allows Synthesis to:
+- Validate that timing calculations are correct
+- Cross-check who_has_ball determination
+- Verify that generated content matches actual recency
+
 ### VALIDATION BEFORE PROCEEDING:
 
 Before continuing to STEP 0, verify:
@@ -972,16 +1006,115 @@ Scan for these patterns in metadata.body:
 - "disponible le..." → Did the meeting happen?
 - "je reviens vers toi..." → Did we come back?
 
-### B) UNFULFILLED PROMISES
-Scan ALL OUTBOUND messages for promises:
-- "Je vous envoie [X]" → Check if X appears in later activities
-- "Je vous propose [date]" → Check if MEETING exists after that date
-- "Je vous rappelle [quand]" → Check if CALL exists
+### B) UNFULFILLED PROMISES (ENHANCED - CRITICAL FOR CONTENT GENERATOR)
+Scan ALL OUTBOUND messages for promises using these patterns:
+
+**PROMISE DETECTION PATTERNS:**
+```
+PROMISE_PATTERNS = {
+  "send_document": [
+    "je t'envoie", "je vous envoie", "I'll send you",
+    "je te fais suivre", "je vous fais suivre",
+    "je te partage", "je vous partage"
+  ],
+  "schedule_call": [
+    "je te rappelle", "je vous rappelle", "I'll call you back",
+    "on se rappelle", "on s'appelle"
+  ],
+  "schedule_meeting": [
+    "je t'envoie une invit", "je vous envoie une invitation",
+    "on se cale", "on se voit", "I'll send a calendar invite"
+  ],
+  "follow_up": [
+    "je reviens vers toi", "je reviens vers vous",
+    "I'll get back to you", "je te tiens au courant"
+  ],
+  "provide_info": [
+    "je te confirme", "je vous confirme",
+    "je vérifie et reviens", "let me check and get back"
+  ]
+}
+```
+
+**PROMISE VERIFICATION ALGORITHM:**
+```
+FOR EACH outbound_activity IN activities WHERE direction = "OUTBOUND":
+  body = outbound_activity.metadata.body.lower()
+  promise_date = outbound_activity.recorded_on
+
+  FOR EACH promise_type, patterns IN PROMISE_PATTERNS:
+    IF any(pattern IN body FOR pattern IN patterns):
+
+      # Check if promise was fulfilled
+      fulfilled = false
+      fulfillment_activity = null
+
+      IF promise_type == "send_document":
+        # Check for DOCUMENT or EMAIL with attachment after promise date
+        FOR EACH later_activity WHERE recorded_on > promise_date:
+          IF later_activity.activity_type IN ["EMAIL", "DOCUMENT"]
+             AND later_activity.direction = "OUTBOUND":
+            IF "doc" IN metadata.body.lower() OR "lien" IN metadata.body.lower():
+              fulfilled = true
+              fulfillment_activity = later_activity
+              BREAK
+
+      ELIF promise_type == "schedule_call":
+        # Check for CALL activity after promise date
+        FOR EACH later_activity WHERE recorded_on > promise_date:
+          IF later_activity.activity_type = "CALL":
+            fulfilled = true
+            BREAK
+
+      ELIF promise_type == "schedule_meeting":
+        # Check for MEETING activity after promise date
+        FOR EACH later_activity WHERE recorded_on > promise_date:
+          IF later_activity.activity_type = "MEETING":
+            fulfilled = true
+            BREAK
+
+      IF NOT fulfilled:
+        days_overdue = (reference_date - promise_date).days
+        unfulfilled_promises.append({
+          "promise_type": promise_type,
+          "promise_text": extract_sentence_containing(body, matched_pattern),
+          "promised_on": promise_date,
+          "days_overdue": days_overdue,
+          "source_activity_id": outbound_activity.activity_id,
+          "json_path": f"activities[{index}].metadata.body",
+          "must_address_first": days_overdue < 30
+        })
+```
 
 ### C) UNANSWERED QUESTIONS
 Scan INBOUND messages for questions:
 - "?" in metadata.body from contact
 - Check if next OUTBOUND addresses the question
+
+**QUESTION DETECTION:**
+```
+FOR EACH inbound_activity WHERE direction = "INBOUND":
+  body = inbound_activity.metadata.body
+
+  IF "?" IN body:
+    question_text = extract_sentence_containing(body, "?")
+
+    # Check if we answered
+    answered = false
+    FOR EACH later_outbound WHERE recorded_on > inbound_activity.recorded_on:
+      IF later_outbound.direction = "OUTBOUND":
+        answered = true
+        BREAK
+
+    IF NOT answered:
+      unanswered_questions.append({
+        "question": question_text,
+        "asked_by": inbound_activity.sender.sender_name,
+        "asked_on": inbound_activity.recorded_on,
+        "days_unanswered": (reference_date - inbound_activity.recorded_on).days,
+        "must_address_first": true
+      })
+```
 
 ### D) MENTIONED NEXT STEPS NOT EXECUTED
 Scan NOTES and CALL summaries for:
@@ -991,11 +1124,42 @@ Scan NOTES and CALL summaries for:
 
 Then verify if those activities exist.
 
+### E) MUST STAY ON CURRENT TOPIC FLAG (CRITICAL FOR CONTENT GENERATOR)
+
+**This flag tells Content Generator whether to continue on current topic or introduce new angle.**
+
+```
+MUST_STAY_ON_TOPIC = false  # Default
+
+# Set to TRUE if any of these conditions:
+
+IF unfulfilled_promises has any entry with days_overdue < 30:
+  MUST_STAY_ON_TOPIC = true
+  CURRENT_TOPIC = unfulfilled_promises[0].promise_type
+  TOPIC_REASON = "Unfulfilled promise must be addressed"
+
+ELIF unanswered_questions has any entry:
+  MUST_STAY_ON_TOPIC = true
+  CURRENT_TOPIC = "answer_question"
+  TOPIC_REASON = "Contact's question must be answered"
+
+ELIF open_sequences has any entry with days_overdue < 14:
+  MUST_STAY_ON_TOPIC = true
+  CURRENT_TOPIC = open_sequences[0].type
+  TOPIC_REASON = "Open sequence must be closed"
+
+ELIF last_outbound.days_ago < 7 AND last_outbound has identifiable topic:
+  MUST_STAY_ON_TOPIC = true
+  CURRENT_TOPIC = extract_topic(last_outbound)
+  TOPIC_REASON = "Recent conversation still active"
+```
+
 ### OUTPUT REQUIREMENT:
 You MUST include in your output:
 
+```json
 "conversation_scan": {
-  "total_activities_read": 3,
+  "total_activities_read": 30,
   "open_sequences_detected": [
     {
       "type": "proposed_meeting",
@@ -1006,15 +1170,46 @@ You MUST include in your output:
       "days_overdue": 110
     }
   ],
-  "unfulfilled_promises": [],
+  "unfulfilled_promises": [
+    {
+      "promise_type": "send_document",
+      "promise_text": "Je t'envoie le document demain",
+      "promised_on": "2025-09-05",
+      "days_overdue": 102,
+      "source_activity_id": "12345",
+      "json_path": "activities[8].metadata.body",
+      "must_address_first": false
+    }
+  ],
   "unanswered_questions": [],
   "key_topics_discussed": [
     "Intégration Jira",
     "Gestion de capacité",
     "40 projets",
     "Budget 28,800 EUR"
-  ]
+  ],
+  "must_stay_on_current_topic": {
+    "flag": true,
+    "current_topic": "send_document",
+    "topic_reason": "Unfulfilled promise to send document",
+    "topic_context": "Contact asked for doc on 2025-09-05, never sent",
+    "instruction_for_content_generator": "Message MUST address the unfulfilled promise before introducing new topics"
+  }
 }
+```
+
+### IMPACT ON CONTENT GENERATOR:
+
+When `must_stay_on_current_topic.flag = true`:
+- Content Generator MUST address the current_topic FIRST
+- DO NOT introduce new subjects
+- DO NOT change the conversation angle
+- Close the open loop before moving forward
+
+**Example patterns for addressing unfulfilled promises:**
+- "Je réalise que je ne t'ai jamais envoyé le doc - le voici!"
+- "Comme promis (avec un peu de retard), voici..."
+- "Suite à notre échange, je te fais suivre..."
 
 ====================
 INBOUND CLASSIFICATION (CRITICAL - FROM V10.0)
@@ -1196,6 +1391,134 @@ Add to your response:
   "engagement_trend": "increasing | stable | decreasing | none"
 }
 ```
+
+### HOOK GENERATION FOR EACH SIGNAL TYPE (MANDATORY):
+
+For EACH engagement signal detected, you MUST generate a `hook_for_content_generator` using these templates:
+
+```
+HOOK_TEMPLATES = {
+  "DOCUMENT_VIEW": {
+    "templates": [
+      "J'ai vu que tu as consulté {document_name}, as-tu des questions?",
+      "Tu as jeté un œil à {document_name} - qu'en penses-tu?",
+      "Suite à ta lecture de {document_name}, je me demandais si..."
+    ],
+    "required_context": "document name from signal_content"
+  },
+
+  "LINKEDIN_LIKE": {
+    "templates": [
+      "J'ai vu que tu avais liké notre post sur {topic} - ça t'a parlé?",
+      "Merci pour le like sur {topic}! C'est un sujet qui te concerne?",
+      "Content de voir que {topic} t'intéresse!"
+    ],
+    "required_context": "topic of the liked post (if available)"
+  },
+
+  "LINKEDIN_COMMENT": {
+    "templates": [
+      "Merci pour ton commentaire sur {topic}! Tu voulais approfondir?",
+      "J'ai vu ton commentaire - tu as raison sur {point}",
+      "Suite à ton commentaire, je voulais te partager..."
+    ],
+    "required_context": "topic + comment content if available"
+  },
+
+  "LINKEDIN_VISIT_PROFILE": {
+    "templates": [
+      "J'ai vu que tu étais passé sur mon profil - tu cherchais quelque chose?",
+      "On se croise sur LinkedIn! Tu voulais qu'on échange?",
+      "J'ai vu ta visite - ça fait un moment qu'on ne s'est pas parlé"
+    ],
+    "required_context": "none needed"
+  },
+
+  "LINKEDIN_CONNECT": {
+    "templates": [
+      "Merci pour la connexion! Content d'être en contact",
+      "Enchanté! Je vois que tu travailles sur {role/company}",
+      "Merci de m'avoir ajouté! On a des sujets communs à explorer?"
+    ],
+    "required_context": "contact job/company"
+  },
+
+  "CONTENT_VIEW": {
+    "templates": [
+      "Tu as regardé {content_name}, ça t'a intéressé?",
+      "J'ai vu que tu as consulté notre contenu sur {topic}",
+      "Suite à ta visite sur {content_name}..."
+    ],
+    "required_context": "content name or topic"
+  },
+
+  "LINKEDIN_FOLLOW_PAGE": {
+    "templates": [
+      "Merci de suivre notre page! Un sujet en particulier qui t'intéresse?",
+      "Content de t'avoir parmi nos followers!"
+    ],
+    "required_context": "none needed"
+  }
+}
+```
+
+### HOOK PRIORITY RULES:
+
+When multiple signals exist, prioritize hooks in this order:
+
+1. **DOCUMENT_VIEW** - Most specific, highest intent signal
+2. **LINKEDIN_COMMENT** - Active engagement, shows thought
+3. **LINKEDIN_LIKE** - Clear interest signal
+4. **LINKEDIN_VISIT_PROFILE** - Curiosity signal
+5. **CONTENT_VIEW** - Interest signal
+6. **LINKEDIN_CONNECT** - Relationship signal
+7. **LINKEDIN_FOLLOW_PAGE** - Brand interest
+
+### ENHANCED ENGAGEMENT SIGNAL OUTPUT:
+
+```json
+"engagement_signals_detected": [
+  {
+    "signal_type": "DOCUMENT_VIEW",
+    "activity_type": "DOCUMENT VIEW",
+    "signal_date": "2025-12-10T14:32:00+00:00",
+    "signal_content": "AirSaas - Sécurité.pdf",
+    "days_since_signal": 7,
+    "is_hot_signal": true,
+    "urgency_impact": "high",
+    "recommended_action": "ACTION_RECOMMANDÉE",
+    "hook_for_content_generator": {
+      "primary_hook": "J'ai vu que tu as consulté notre doc sécurité, as-tu des questions?",
+      "alternative_hooks": [
+        "Tu as jeté un œil à notre doc sécurité - un sujet clé pour toi?",
+        "Suite à ta lecture du doc sécurité, je me demandais si c'était un point bloquant?"
+      ],
+      "context_extracted": {
+        "document_name": "AirSaas - Sécurité.pdf",
+        "topic_inferred": "sécurité",
+        "relevance_to_deal": "Security is often a concern for enterprise deals"
+      },
+      "usage_instruction": "Use primary_hook as opening line or integrate topic naturally"
+    },
+    "json_path": "activities[3]"
+  }
+],
+"primary_engagement_hook": {
+  "signal_used": "DOCUMENT_VIEW",
+  "hook_text": "J'ai vu que tu as consulté notre doc sécurité, as-tu des questions?",
+  "priority_reason": "Most recent and highest-intent signal",
+  "days_since": 7,
+  "content_generator_instruction": "Open message with this hook or reference the security doc topic"
+}
+```
+
+### CONTENT GENERATOR INTEGRATION:
+
+The `primary_engagement_hook` object tells Content Generator:
+- Which signal to prioritize in the message
+- The exact hook text to use or adapt
+- Context for natural integration
+- Why this signal was chosen
 
 ### SIGNAL DETECTION RULES:
 

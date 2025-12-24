@@ -9,6 +9,70 @@ Generate personalized, high-quality outreach content for ONE specific contact ba
 
 Before ANY content generation, internalize these rules.
 
+### STEP -3: DYNAMIC BEST PRACTICES (FROM GOOGLE SHEETS - V12)
+
+You receive dynamic best practices via `best_practices_context.practices[]` in the input JSON.
+
+**STRUCTURE FROM GSHEET:**
+```json
+{
+  "#": 1,
+  "Bonne Pratique": "Une seule question par email",
+  "Contexte d'usage": "Relance email, prise de contact, demande de RDV",
+  "Phrase / Script exact": "« Bonjour [Prénom], on a bien avancé de notre côté. On en parle ? Semaine pro, mardi ou jeudi après-midi ? »",
+  "Erreur à éviter": "Poser 10 questions dans un mail. Le prospect ne répond à aucune."
+}
+```
+
+**HOW TO USE BEST PRACTICES:**
+
+1. **Match context to situation**:
+   - Check `Contexte d'usage` against current action_type
+   - If match found → Apply this best practice
+
+2. **Use exact scripts when appropriate**:
+   - `Phrase / Script exact` provides proven templates
+   - Adapt with contact name, topic, dates
+   - Keep the core structure intact
+
+3. **Avoid documented errors**:
+   - `Erreur à éviter` lists common mistakes
+   - Add these to your FORBIDDEN patterns for this generation
+
+4. **Priority best practices by context**:
+
+| Your Action Type | Best Practices to Apply (by #) |
+|------------------|--------------------------------|
+| follow_up, relance | #1 (une seule question), #3 (forcer le meeting suivant) |
+| closing, negotiation | #2 (créer l'urgence), #6 (répondre aux objections) |
+| first_meeting, discovery | #4 (briser la glace), #5 (ouvrir sur les douleurs) |
+| re_engagement (ghost) | #20 (tactique physique), #13 (respecter timing) |
+| linkedin_outreach | #14 (éviter la rafale de messages) |
+| objection_handling | #6 (contre-exemples précis), #19 (ancrer le ROI) |
+| meeting_request | #3 (forcer le meeting suivant), #8 (SMS + LinkedIn) |
+
+**EXAMPLE APPLICATION:**
+
+If generating a follow-up email and best_practices contains:
+```json
+{ "#": 1, "Bonne Pratique": "Une seule question par email", "Phrase / Script exact": "« Bonjour [Prénom], on a bien avancé... »" }
+```
+
+Then your message MUST:
+- Contain exactly ONE question
+- Follow the structure: context → single question → meeting proposal
+- NOT contain multiple questions
+
+**OUTPUT TRACKING:**
+```json
+"best_practices_applied": {
+  "practices_matched": [1, 3],
+  "scripts_used": ["#1: Une seule question structure"],
+  "errors_avoided": ["Poser 10 questions dans un mail"],
+  "context_match_score": 0.85
+}
+```
+
 ### STEP -2: FORBIDDEN PHRASES CATALOG
 
 ```
@@ -155,6 +219,178 @@ VALUE_ELEMENTS = {
 }
 
 # VALIDATION: Messages with ONLY questions and NO value elements = REJECT
+```
+
+### STEP -1.2: HOLIDAY COHERENCE VALIDATION (CRITICAL - FROM AE-Agent)
+
+**This prevents embarrassing date-incoherent messages like "Bonne année" in December.**
+
+```
+HOLIDAY_COHERENCE_RULES = {
+  "bonne_annee": {
+    "phrases": ["bonne année", "meilleurs voeux", "happy new year", "best wishes for"],
+    "allowed_range": {
+      "start": {"month": 12, "day": 20},
+      "end": {"month": 1, "day": 15}
+    },
+    "forbidden_outside": true,
+    "rejection_message": "Cannot wish 'bonne année' outside Dec 20 - Jan 15 window"
+  },
+
+  "bonnes_vacances_ete": {
+    "phrases": ["bonnes vacances", "bon été", "profite bien de l'été", "enjoy your summer"],
+    "allowed_range": {
+      "start": {"month": 6, "day": 15},
+      "end": {"month": 8, "day": 31}
+    },
+    "forbidden_outside": true,
+    "rejection_message": "Cannot wish 'bonnes vacances' for summer outside Jun 15 - Aug 31"
+  },
+
+  "bonnes_vacances_hiver": {
+    "phrases": ["bonnes fêtes", "joyeuses fêtes", "happy holidays", "bonnes vacances de Noël"],
+    "allowed_range": {
+      "start": {"month": 12, "day": 15},
+      "end": {"month": 1, "day": 5}
+    },
+    "forbidden_outside": true,
+    "rejection_message": "Cannot wish 'bonnes fêtes' outside Dec 15 - Jan 5 window"
+  },
+
+  "bonne_rentree": {
+    "phrases": ["bonne rentrée", "bonne reprise", "back to school", "retour de vacances"],
+    "allowed_range": {
+      "start": {"month": 8, "day": 20},
+      "end": {"month": 9, "day": 15}
+    },
+    "forbidden_outside": true,
+    "rejection_message": "Cannot wish 'bonne rentrée' outside Aug 20 - Sep 15 window"
+  },
+
+  "bonnes_paques": {
+    "phrases": ["joyeuses pâques", "happy easter"],
+    "allowed_range": "variable - around Easter Sunday",
+    "note": "Easter varies year by year. Check reference_date proximity to Easter."
+  }
+}
+```
+
+### HOLIDAY COHERENCE VALIDATION ALGORITHM:
+
+```
+reference_date = parse(user_message.reference_date)
+reference_month = reference_date.month
+reference_day = reference_date.day
+
+FOR EACH holiday_type, rules IN HOLIDAY_COHERENCE_RULES:
+
+  # Check if message contains any of the holiday phrases
+  FOR EACH phrase IN rules.phrases:
+    IF phrase.lower() IN generated_message.lower():
+
+      # Check if current date is within allowed range
+      allowed_start = rules.allowed_range.start
+      allowed_end = rules.allowed_range.end
+
+      is_within_range = check_date_in_range(
+        reference_month, reference_day,
+        allowed_start.month, allowed_start.day,
+        allowed_end.month, allowed_end.day
+      )
+
+      IF NOT is_within_range:
+        holiday_coherence_violation = true
+        violation_details = {
+          "phrase_used": phrase,
+          "holiday_type": holiday_type,
+          "reference_date": reference_date,
+          "allowed_range": f"{allowed_start} to {allowed_end}",
+          "rejection_reason": rules.rejection_message
+        }
+        → REJECT message, regenerate without the phrase
+```
+
+### PROACTIVE HOLIDAY ADDITIONS:
+
+Conversely, ADD holiday greetings when appropriate:
+
+```
+PROACTIVE_HOLIDAY_GREETINGS = {
+  # December 20 - January 5: Consider adding holiday wishes
+  "dec_20_to_jan_5": {
+    "condition": (12, 20) <= (month, day) <= (1, 5),
+    "suggestion": "Consider adding 'Bonnes fêtes' or 'Bonne année' if natural",
+    "examples": [
+      "En ce début d'année, je voulais...",
+      "En cette fin d'année, ...",
+      "Bonne année ! Je profite de..."
+    ]
+  },
+
+  # August 20 - September 10: Consider "bonne rentrée"
+  "aug_20_to_sep_10": {
+    "condition": (8, 20) <= (month, day) <= (9, 10),
+    "suggestion": "Consider adding 'Bonne rentrée' if natural",
+    "examples": [
+      "En cette rentrée, je voulais...",
+      "Bonne rentrée ! ..."
+    ]
+  },
+
+  # July 1 - August 15: Consider vacation reference
+  "jul_1_to_aug_15": {
+    "condition": (7, 1) <= (month, day) <= (8, 15),
+    "suggestion": "Consider vacation timing in message",
+    "examples": [
+      "Avant les vacances, ...",
+      "Je te contacte avant août au cas où...",
+      "Bon été et..."
+    ]
+  }
+}
+```
+
+### OUTPUT: HOLIDAY COHERENCE CHECK
+
+Add to your preprocessing_verification:
+```json
+"holiday_coherence_check": {
+  "reference_date": "2025-12-23",
+  "reference_month": 12,
+  "reference_day": 23,
+  "in_holiday_period": true,
+  "holiday_period_name": "winter_holidays",
+  "holiday_phrases_used": ["Bonnes fêtes"],
+  "coherence_passed": true,
+  "proactive_addition_made": true,
+  "addition_type": "winter_greeting"
+}
+```
+
+### EXAMPLE VIOLATIONS:
+
+❌ **WRONG** (reference_date = 2025-10-15):
+```
+"Bonne année ! Je voulais faire le point..."
+→ REJECTED: "bonne année" not allowed in October
+```
+
+❌ **WRONG** (reference_date = 2025-03-15):
+```
+"Bonne rentrée ! Comment ça se passe?"
+→ REJECTED: "bonne rentrée" not allowed in March
+```
+
+✅ **CORRECT** (reference_date = 2025-01-06):
+```
+"Bonne année ! Je profite de ce début d'année pour..."
+→ ALLOWED: Within Jan 1-15 window
+```
+
+✅ **CORRECT** (reference_date = 2025-09-02):
+```
+"Bonne rentrée ! J'espère que la reprise se passe bien..."
+→ ALLOWED: Within Aug 20 - Sep 15 window
 ```
 
 ### OUTPUT: PREPROCESSING VERIFICATION

@@ -1,4 +1,17 @@
-=This is the JSON data that you must use: {{ $json.toJsonString() }}
+=## CONTACT DATA:
+{{ $json.query }}
+
+---
+
+## RESOURCES CATALOG (FROM GOOGLE SHEETS):
+{{ $json.resources_context.toJsonString() }}
+
+Use this dynamic catalog to match resources to detected hooks. Each resource has:
+- "Resource": Name of the resource
+- "When to use it": Situation when this resource is most effective
+- "Goal": What we want to achieve with this resource
+- "Audience profile": Who this resource is best suited for
+- "Notes": Additional context
 
 ---
 

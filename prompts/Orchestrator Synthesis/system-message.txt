@@ -582,6 +582,225 @@ STEP 0.5.4: Determine action based on response status
 
 ---
 
+====================
+🚨 PRIORITY 0.6: UNCLOSED LOOPS & MULTI-OWNER SAFETY CHECKS (V15 - FROM AE-Agent)
+====================
+
+**EXECUTE THESE CHECKS AFTER CHURN CHECK, BEFORE PROCESSING WAVE 2**
+
+### SAFETY CHECK 1: UNCLOSED LOOPS VALIDATION
+
+From State Analyzer's conversation_scan:
+
+```
+STEP 0.6.1: Extract unclosed loops
+  unfulfilled_promises = wave1_results.state_analyzer.conversation_scan.unfulfilled_promises
+  unanswered_questions = wave1_results.state_analyzer.conversation_scan.unanswered_questions
+  must_stay_on_topic = wave1_results.state_analyzer.conversation_scan.must_stay_on_current_topic
+
+STEP 0.6.2: Validate content addresses loops
+  IF unfulfilled_promises.length > 0:
+    FOR EACH promise IN unfulfilled_promises:
+      IF promise.days_overdue < 30 AND promise.must_address_first = true:
+        → Verify generated content addresses this promise
+        → IF NOT addressed: BLOCK action, add to risk_factors
+
+STEP 0.6.3: Enforce topic continuity
+  IF must_stay_on_topic.flag = true:
+    → Verify generated content relates to must_stay_on_topic.current_topic
+    → IF new topic introduced without closing loop: BLOCK action
+```
+
+### OUTPUT: UNCLOSED LOOPS CHECK
+
+```json
+"unclosed_loops_check": {
+  "has_unfulfilled_promises": true,
+  "promises_found": [
+    {
+      "promise_type": "send_document",
+      "promise_text": "Je t'envoie le document demain",
+      "days_overdue": 15,
+      "must_address_first": true
+    }
+  ],
+  "must_stay_on_topic": {
+    "enforced": true,
+    "current_topic": "send_document",
+    "content_addresses_topic": true
+  },
+  "action_implication": "Content MUST address unfulfilled promise before new topics"
+}
+```
+
+### SAFETY CHECK 2: MULTI-OWNER COORDINATION
+
+From State Analyzer's team_involvement:
+
+```
+STEP 0.6.4: Extract team involvement
+  team_members = wave1_results.state_analyzer.team_involvement.team_members_active
+  other_contributors = wave1_results.state_analyzer.team_involvement.other_contributors
+  coordination_needed = wave1_results.state_analyzer.team_involvement.coordination_needed
+
+STEP 0.6.5: Check for active parallel outreach
+  FOR EACH contributor IN other_contributors:
+    IF contributor.days_since_last < 14:
+      IF contributor has scheduled next_step (touchpoint, meeting, lunch):
+        → action = "wait" or "no_action"
+        → reason = "Another team member is actively managing this contact"
+        → DO NOT send parallel outreach
+
+STEP 0.6.6: Check for scheduled touchpoints
+  scheduled_touchpoints = wave1_results.state_analyzer.scheduled_touchpoints
+  IF scheduled_touchpoints.has_scheduled_touchpoint = true:
+    IF scheduled_touchpoints.next_touchpoint.date < 30 days from now:
+      → action = "wait"
+      → reevaluate_at = day after scheduled touchpoint
+```
+
+### OUTPUT: MULTI-OWNER COORDINATION CHECK
+
+```json
+"multi_owner_coordination_check": {
+  "team_members_active": ["bertran_ruiz", "roland_bouchut"],
+  "coordination_needed": true,
+  "other_contributor_active": {
+    "name": "roland_bouchut",
+    "last_activity": "2025-12-17",
+    "days_since": 3,
+    "has_scheduled_touchpoint": true,
+    "touchpoint_details": {
+      "type": "lunch",
+      "scheduled_for": "2026-01-13 to 2026-01-17",
+      "owner": "roland_bouchut"
+    }
+  },
+  "action_override": {
+    "action": "wait",
+    "reason": "Roland has scheduled lunch for week of Jan 13 - no parallel outreach needed",
+    "reevaluate_at": "2026-01-20T09:00:00+01:00"
+  }
+}
+```
+
+### SAFETY CHECK 3: TEMPORAL REFERENCE VALIDATION
+
+```
+STEP 0.6.7: Validate temporal references in content
+  days_since = wave1_results.state_analyzer.activity_scan_verification.days_since_last_activity
+  generated_content = wave2_results.content_generator.generated_content
+
+  # Extract temporal claims from content
+  temporal_claims = extract_temporal_phrases(generated_content)
+
+  # Validate each claim
+  FOR EACH claim IN temporal_claims:
+    IF claim implies "long time ago" AND days_since < 14:
+      → REJECT content
+      → reason = "Temporal phrase inappropriate for recent activity"
+
+    IF claim implies "recently" AND days_since > 30:
+      → REJECT content
+      → reason = "Temporal phrase inappropriate for dormant contact"
+```
+
+### OUTPUT: TEMPORAL REFERENCE VALIDATION
+
+```json
+"temporal_reference_validation": {
+  "days_since_last_activity": 2,
+  "temporal_phrases_found": [],
+  "violations": [],
+  "validation_passed": true
+}
+```
+
+### SAFETY CHECK 4: OPEN DEAL TEMPLATE PROTECTION
+
+```
+STEP 0.6.8: Validate template for OPEN deals
+  has_open_deal = wave1_results.state_analyzer.multi_deal_analysis.has_open_deal
+  OR wave1_results.opportunity_detector.deal_classification.classification = "DEAL_OPEN"
+
+  IF has_open_deal = true:
+    recommended_template = wave2_results.content_generator.template_used
+
+    FORBIDDEN_TEMPLATES_FOR_OPEN_DEAL = [
+      "re_engagement",
+      "nurture",
+      "win_back",
+      "dormant_customer"
+    ]
+
+    IF recommended_template IN FORBIDDEN_TEMPLATES_FOR_OPEN_DEAL:
+      → REJECT template
+      → Use "sales_followup" or "value_share" instead
+      → Add to warnings: "Template changed from {original} to sales_followup"
+```
+
+### OUTPUT: OPEN DEAL TEMPLATE CHECK
+
+```json
+"open_deal_template_check": {
+  "has_open_deal": true,
+  "template_recommended": "sales_followup",
+  "template_appropriate": true,
+  "forbidden_templates_blocked": []
+}
+```
+
+### SYNTHESIS SAFETY CHECKS SUMMARY (ALL 5 CHECKS)
+
+Add this to your final output:
+
+```json
+"synthesis_safety_checks": {
+  "check_1_unclosed_loops": {
+    "passed": true,
+    "unfulfilled_promises": 0,
+    "action": null
+  },
+  "check_2_multi_owner_coordination": {
+    "passed": false,
+    "action": "WAIT",
+    "reason": "Roland has scheduled touchpoint for week of Jan 13"
+  },
+  "check_3_temporal_reference": {
+    "passed": true,
+    "violations": []
+  },
+  "check_4_open_deal_template": {
+    "passed": true,
+    "template_used": "sales_followup"
+  },
+  "check_5_churn_signal": {
+    "passed": true,
+    "churn_detected": false
+  },
+  "overall_verdict": "WAIT",
+  "blocking_reason": "check_2: Another team member has scheduled touchpoint",
+  "action_override": {
+    "original_action": "send_message",
+    "overridden_to": "wait",
+    "override_source": "multi_owner_coordination_check"
+  }
+}
+```
+
+### OVERRIDE PRIORITY (highest to lowest):
+
+1. **CHURN DETECTED + RESPONDED** → wait (no override possible)
+2. **CHURN DETECTED + NOT RESPONDED** → send_message (acknowledgment only)
+3. **MULTI-OWNER ACTIVE TOUCHPOINT** → wait
+4. **MEETING SCHEDULED** → wait
+5. **EXPLICIT TIMING AGREEMENT** → wait until date
+6. **UNCLOSED LOOP < 30 DAYS** → must address in content
+7. **OPEN DEAL** → must use sales template (not re-engagement)
+8. **Standard processing** → apply normal rules
+
+---
+
 ## INPUT STRUCTURE
 
 ### Wave 1 Results (from Distribution Orchestrator)

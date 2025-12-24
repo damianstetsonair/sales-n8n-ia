@@ -460,17 +460,17 @@ Scans emails/notes for scheduled meetings that may not be in the calendar yet:
 }
 ```
 
-### Synthesis Safety Checks (5 Checks)
+### Synthesis Safety Checks (5 Checks) - ENHANCED V15.0
 
 Before final output, Synthesis runs 5 safety checks:
 
 | Check | What it Validates | Action if Failed |
 |-------|-------------------|------------------|
-| Multi-Deal Consistency | OPEN deal → no re-engagement template | REJECT |
+| Unclosed Loops | Unfulfilled promises < 30d must be addressed | BLOCK |
 | Multi-Owner Coordination | Other team member active < 14d | BLOCK |
-| Scheduled Touchpoint Respect | Touchpoint < 30 days | WAIT |
-| Temporal Reference Accuracy | Message matches actual recency | REJECT |
-| Activity Recency Sanity | High activity + long gap = scan error | FLAG |
+| Temporal Reference | Message matches actual recency | REJECT |
+| Open Deal Template | OPEN deal → no re-engagement template | REJECT |
+| Churn Signal | Churned customers properly handled | BLOCK |
 
 **Output:**
 ```json
@@ -529,6 +529,90 @@ Context Analyzer now outputs `deal_context` with messaging constraints:
 **When other team member active:**
 - ❌ Sending parallel outreach
 - ❌ Ignoring scheduled touchpoints
+
+---
+
+## 🚀 V15.0 AE-Agent Enhancements (December 2025)
+
+V15.0 integrates proven business rules from AE-Agent to enrich prompt quality.
+
+### New Features Added:
+
+#### 1. Unclosed Loops Detection (State Analyzer)
+Detects unfulfilled promises and unanswered questions:
+- Scans OUTBOUND for promises: "je t'envoie", "je te rappelle", "on se cale"
+- Verifies if promises were fulfilled (doc sent, call made, meeting scheduled)
+- Outputs `unfulfilled_promises[]` with `days_overdue` and `must_address_first` flag
+
+#### 2. Must Stay On Topic Flag (State Analyzer → Content Generator)
+```json
+"must_stay_on_current_topic": {
+  "flag": true,
+  "current_topic": "send_document",
+  "topic_reason": "Unfulfilled promise to send document",
+  "instruction_for_content_generator": "Message MUST address the unfulfilled promise before introducing new topics"
+}
+```
+
+#### 3. Hook Generation for Engagement Signals (State Analyzer)
+Each engagement signal now includes ready-to-use hooks:
+```json
+"hook_for_content_generator": {
+  "primary_hook": "J'ai vu que tu as consulté notre doc sécurité, as-tu des questions?",
+  "alternative_hooks": ["Tu as jeté un œil..."],
+  "usage_instruction": "Use primary_hook as opening line"
+}
+```
+
+#### 4. Holiday Coherence Validation (Content Generator)
+Prevents embarrassing date-incoherent messages:
+- "Bonne année" only allowed Dec 20 - Jan 15
+- "Bonnes vacances" only allowed Jun 15 - Aug 31
+- "Bonne rentrée" only allowed Aug 20 - Sep 15
+
+#### 5. Engagement Signal Channel Mapping (Channel Selector)
+Maps engagement signals to preferred response channels:
+| Signal | Preferred Channel | Boost |
+|--------|-------------------|-------|
+| LINKEDIN_LIKE | LINKEDIN | +0.30 |
+| LINKEDIN_COMMENT | LINKEDIN | +0.35 |
+| DOCUMENT_VIEW | EMAIL | +0.30 |
+
+#### 6. Post-Synthesis Validation Scoring (Orchestrator Evaluation)
+5-dimension validation system:
+- Temporal Accuracy (0.0-1.0)
+- Tone Appropriateness (0.0-1.0)
+- Value Density (0.0-1.0)
+- Hook Usage (0.0-1.0)
+- Structure Compliance (0.0-1.0)
+
+Overall score >= 0.80 = PASS
+
+#### 7. Enhanced Synthesis Safety Checks
+Added override priority (highest to lowest):
+1. CHURN DETECTED + RESPONDED → wait
+2. CHURN DETECTED + NOT RESPONDED → send_message (acknowledgment)
+3. MULTI-OWNER ACTIVE TOUCHPOINT → wait
+4. MEETING SCHEDULED → wait
+5. EXPLICIT TIMING AGREEMENT → wait until date
+6. UNCLOSED LOOP < 30 DAYS → must address in content
+7. OPEN DEAL → must use sales template
+
+#### 8. Chronology Verification Output (State Analyzer)
+Structured output for downstream validation:
+```json
+"chronology_verification": {
+  "reference_date_used": "2025-12-20T00:00:00+01:00",
+  "last_inbound": {...},
+  "last_outbound": {...},
+  "most_recent_overall": "OUTBOUND",
+  "days_since_last_contact": 3,
+  "sequence_analysis": {
+    "who_spoke_last": "us",
+    "awaiting_response_from": "them"
+  }
+}
+```
 
 ---
 
