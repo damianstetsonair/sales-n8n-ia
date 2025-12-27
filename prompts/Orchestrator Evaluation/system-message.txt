@@ -301,6 +301,127 @@ IF state_analyzer.multi_deal_analysis.has_open_deal = true:
     instruction = "OPEN deal detected but re-engagement template used - use sales_followup instead"
 ```
 
+### CHECK 6: CONSECUTIVE OUTBOUND COUNT ACCURACY (V15.3 - SEMANTIC COUNTING)
+
+This check validates that State Analyzer correctly counted DISTINCT FOLLOW-UP ATTEMPTS, not raw message count.
+
+**🚨 V15.3 UPDATE: Ghosting is about PERSISTENCE, not VERBOSITY**
+
+- Messages on SAME DAY as last inbound = **conversation burst** (do NOT count toward ghosting)
+- Messages on DIFFERENT days after last inbound = **distinct follow-up attempts** (count toward ghosting)
+
+```
+STEP 1: Get State Analyzer's claimed counts
+  raw_count = state_analyzer.consecutive_outbound_tracking.raw_outbound_count
+  distinct_follow_up_count = state_analyzer.consecutive_outbound_tracking.follow_up_attempts.distinct_attempt_count
+  per_channel_count = state_analyzer.per_channel_state[channel].consecutive_outbound_without_reply
+
+STEP 2: Independently calculate using V15.3 SEMANTIC logic
+
+  # Sort activities by date DESC
+  sorted_activities = sort(activities[], by="recorded_on", order="DESC")
+
+  # Find last INBOUND
+  last_inbound_date = null
+  FOR activity IN sorted_activities:
+    IF activity.direction == "INBOUND":
+      last_inbound_date = activity.recorded_on
+      BREAK
+
+  # Extract date only (YYYY-MM-DD) from last inbound
+  last_inbound_date_only = extract_date(last_inbound_date)
+
+  # Count DISTINCT FOLLOW-UP ATTEMPTS (different days only)
+  follow_up_dates = set()
+  conversation_burst_count = 0
+  raw_outbound_count = 0
+
+  FOR activity IN sorted_activities:
+    IF activity.recorded_on > last_inbound_date AND activity.direction == "OUTBOUND":
+      raw_outbound_count += 1
+      activity_date_only = extract_date(activity.recorded_on)
+
+      IF activity_date_only == last_inbound_date_only:
+        # Same day = conversation burst, does NOT count toward ghosting
+        conversation_burst_count += 1
+      ELSE:
+        # Different day = follow-up attempt
+        follow_up_dates.add(activity_date_only)
+
+  actual_distinct_follow_ups = len(follow_up_dates)
+
+STEP 3: Validate counts match V15.3 expectations
+  # per_channel_state.consecutive_outbound_without_reply MUST equal distinct_follow_up_count
+  IF per_channel_count != actual_distinct_follow_ups:
+    coherence_violation = true
+    action = "retry"
+    instruction = f"per_channel_state.consecutive_outbound_without_reply = {per_channel_count}, but actual distinct follow-up attempts = {actual_distinct_follow_ups}. V15.3: Count DISTINCT FOLLOW-UP DATES, not raw messages."
+
+  # Also verify internal consistency
+  IF distinct_follow_up_count != actual_distinct_follow_ups:
+    coherence_violation = true
+    action = "retry"
+    instruction += f" Internal inconsistency: follow_up_attempts.distinct_attempt_count = {distinct_follow_up_count}, but calculated = {actual_distinct_follow_ups}"
+```
+
+### V15.3 SEMANTIC COUNTING EXAMPLE:
+
+```
+Raw data after last inbound (Sept 12):
+  - Sept 12: 5 messages → CONVERSATION BURST (same day = 0 follow-up attempts)
+  - Sept 19: 1 message → FOLLOW-UP ATTEMPT #1
+  - Sept 29: 1 message → FOLLOW-UP ATTEMPT #2
+
+  raw_outbound_count = 7
+  conversation_burst_count = 5
+  actual_distinct_follow_ups = 2 (Sept 19 + Sept 29)
+
+Expected State Analyzer output:
+  - consecutive_outbound_tracking.raw_outbound_count = 7 ✓
+  - consecutive_outbound_tracking.follow_up_attempts.distinct_attempt_count = 2 ✓
+  - per_channel_state[LINKEDIN].consecutive_outbound_without_reply = 2 ✓ (MUST match distinct_attempt_count)
+```
+
+### WHAT TO CHECK:
+
+| Field | Expected Value | Description |
+|-------|---------------|-------------|
+| raw_outbound_count | Any | Total messages after last inbound (informational only) |
+| distinct_attempt_count | N | Messages on DIFFERENT days than last inbound |
+| consecutive_outbound_without_reply | N | MUST equal distinct_attempt_count |
+
+### OUTPUT REQUIREMENT:
+
+Add to evaluation output:
+```json
+"check_6_consecutive_outbound": {
+  "passed": true,
+  "v15_3_semantic_counting": true,
+  "raw_outbound_count": 7,
+  "conversation_burst_count": 5,
+  "distinct_follow_up_dates": ["2025-09-19", "2025-09-29"],
+  "actual_distinct_follow_ups": 2,
+  "claimed_distinct_follow_ups": 2,
+  "per_channel_claimed": 2,
+  "all_counts_aligned": true,
+  "last_inbound_date": "2025-09-12T07:00:00+00:00",
+  "assessment": "State Analyzer correctly applied V15.3 semantic counting"
+}
+```
+
+### FAIL EXAMPLE (pre-V15.3 raw counting):
+```json
+"check_6_consecutive_outbound": {
+  "passed": false,
+  "v15_3_semantic_counting": false,
+  "raw_outbound_count": 7,
+  "per_channel_claimed": 7,
+  "actual_distinct_follow_ups": 2,
+  "action": "retry",
+  "instruction": "State Analyzer used raw count (7) instead of distinct follow-up attempts (2). Apply V15.3: conversation burst on same day as inbound does NOT count toward ghosting."
+}
+```
+
 ====================
 EVALUATION CHECKLIST (ORIGINAL)
 ====================
@@ -345,6 +466,24 @@ DECISION RULES (ENHANCED)
 - Coherence violation detected
 - Churn signal missed or mishandled
 - Provide SPECIFIC retry instructions
+
+### 🚨 MAX RETRY LIMIT (CRITICAL)
+
+The workflow has a maximum Wave 1 iteration limit defined dynamically:
+- **max_wave1_iteration**: `{{ $('Save data call').item.json.max_wave1_iteration }}`
+
+```
+IF current_iteration >= max_wave1_iteration:
+  → FORCE action = "continue_with_warnings"
+  → DO NOT retry (infinite loop prevention)
+  → Document all issues in warnings array
+  → Let Synthesis handle remaining issues
+```
+
+**Important:** You do NOT have direct access to the current iteration count. The workflow handles this externally via the Retry Switch node. However, if you notice the same errors appearing repeatedly despite clear retry instructions, you should:
+1. Switch to `action = "continue_with_warnings"`
+2. Document the persistent issues clearly
+3. Trust that Synthesis can apply safety checks to handle edge cases
 
 **action = "continue_with_warnings"** when:
 - 0.60 <= overall_validation_score < 0.80

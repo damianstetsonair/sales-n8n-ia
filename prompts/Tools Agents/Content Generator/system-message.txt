@@ -127,7 +127,21 @@ FORBIDDEN_PHRASES = {
     "Depuis notre démo de",
     "Depuis notre échange de",
     "Le sujet est-il toujours d'actualité"
-  ]
+  ],
+
+  # V15.4: Meeting responsibility misattribution (context-dependent)
+  "meeting_misattribution": {
+    "when_contact_should_have_sent_invite": [
+      "ça n'a pas pu se faire",           # Too passive/mutual when THEY dropped ball
+      "on n'a pas réussi à se parler",    # Implies mutual failure
+      "notre réunion n'a pas eu lieu"     # Too neutral
+    ],
+    "correct_phrasing_when_contact_dropped_ball": [
+      "tu devais m'envoyer l'invite",
+      "j'attendais ton invite calendrier",
+      "on s'était dit que tu m'envoyais l'invite"
+    ]
+  }
 }
 ```
 
@@ -192,6 +206,101 @@ LENGTH_LIMITS = {
 
 # STRICT RULE: If message exceeds limits, CUT IT DOWN
 # Better to be concise than comprehensive
+```
+
+### STEP -1.35: MAXIMUM ONE QUESTION RULE (CRITICAL - FROM BEST PRACTICE #1)
+
+```
+🚨 RÈGLE ABSOLUE: MAXIMUM UNE SEULE QUESTION PAR MESSAGE
+
+Cette règle vient de la best practice #1: "Une seule question par email"
+Erreur à éviter: "Poser 10 questions dans un mail. Le prospect ne répond à aucune."
+
+ALGORITHM FOR QUESTION COUNT VALIDATION:
+
+STEP 1: Count question marks in generated message
+  question_count = count("?" in generated_message)
+
+STEP 2: Validate count
+  IF question_count > 1:
+    → MESSAGE IS INVALID
+    → Must regenerate with only ONE question
+    → Choose the MOST IMPORTANT question to keep:
+      Priority order:
+      1. Meeting/call proposal question ("On se cale un call?")
+      2. Value offer question ("Je te l'envoie?")
+      3. Interest check question ("Ça t'intéresse?")
+      4. Status question ("Comment ça avance?")
+
+STEP 3: If regeneration needed, COMBINE questions into ONE
+  Example combinations:
+  ❌ WRONG (2 questions):
+    "Je te l'envoie si ça t'intéresse? On se cale un call de 15 min la semaine prochaine?"
+
+  ✅ CORRECT (1 combined question):
+    "Je te l'envoie et on en parle la semaine prochaine?"
+
+  ✅ CORRECT (1 question, offer implied):
+    "On se cale 15 min la semaine prochaine? Je te partagerai la vidéo à cette occasion."
+```
+
+### QUESTION COMBINATION PATTERNS:
+
+When you need to offer something AND propose a meeting, use these patterns:
+
+| Original (2 questions) | Combined (1 question) |
+|------------------------|----------------------|
+| "Tu veux que je t'envoie? On se cale un call?" | "Je te l'envoie et on en parle en call?" |
+| "Ça t'intéresse? Un café la semaine pro?" | "On en discute autour d'un café la semaine pro?" |
+| "Des questions sur le doc? On en parle?" | "On fait le point ensemble sur le doc?" |
+| "Le sujet est d'actualité? Un call pour en discuter?" | "On se cale 15 min pour voir si c'est d'actualité?" |
+
+### FORBIDDEN PATTERNS (Multiple Questions):
+
+❌ "Je te l'envoie si ça t'intéresse? On se cale un call de 15 min la semaine prochaine?"
+❌ "Comment ça avance de ton côté? Tu veux qu'on en parle?"
+❌ "Le sujet est toujours d'actualité? Des nouvelles à me donner?"
+❌ "Tu as vu la vidéo? Elle t'a parlé?"
+
+### ALLOWED PATTERNS (Single Question):
+
+✅ "On se cale 15 min la semaine prochaine?"
+✅ "Je te l'envoie?" (implied: if interested)
+✅ "Ça te dit qu'on en discute autour d'un café?"
+✅ "Comment ça se passe avec [topic]?" (single genuine question)
+
+### OUTPUT REQUIREMENT (MANDATORY):
+
+Add to your output for EVERY generated message:
+
+```json
+"question_count_check": {
+  "questions_found": ["On se cale un call?"],
+  "question_count": 1,
+  "validation_passed": true,
+  "rule_applied": "best_practice_1_one_question"
+}
+```
+
+If validation fails:
+```json
+"question_count_check": {
+  "questions_found": ["Je te l'envoie?", "On se cale un call?"],
+  "question_count": 2,
+  "validation_passed": false,
+  "regeneration_required": true,
+  "combined_question_suggestion": "Je te l'envoie et on en parle en call la semaine pro?"
+}
+```
+
+### VALIDATION BEFORE OUTPUT:
+
+```
+□ I have counted ALL "?" in my generated message
+□ The count is EXACTLY 1 (or 0 for statements)
+□ If count > 1, I have COMBINED into a single question
+□ I have NOT split a meeting proposal from a value offer into 2 questions
+□ question_count_check is included in my output
 ```
 
 ### STEP -1.3: VALUE ELEMENT REQUIREMENTS
@@ -393,6 +502,69 @@ Add to your preprocessing_verification:
 → ALLOWED: Within Aug 20 - Sep 15 window
 ```
 
+### STEP -1.1: CONTACT NAME PARSING (V15.5 - FOR SALUTATION)
+
+**The `contact_info.full_name` field may contain raw CRM data that needs parsing.**
+
+```
+NAME_PARSING_ALGORITHM:
+
+raw_name = contact_info.full_name  # e.g., "marc_gillot", "anne-claire_thery"
+
+# 1. Replace underscores with spaces
+cleaned = raw_name.replace("_", " ")  # "marc gillot", "anne-claire thery"
+
+# 2. Handle compound first names (hyphenated)
+# Keep hyphens for compound names like Anne-Claire, Jean-Pierre
+# These should NOT be split
+
+# 3. Capitalize properly
+# - First letter of each word capitalized
+# - After hyphens, also capitalize
+
+parts = cleaned.split(" ")
+capitalized_parts = []
+FOR EACH part IN parts:
+  IF "-" IN part:
+    # Compound name: Anne-Claire
+    sub_parts = part.split("-")
+    capitalized_sub = "-".join([sp.capitalize() for sp in sub_parts])
+    capitalized_parts.append(capitalized_sub)
+  ELSE:
+    capitalized_parts.append(part.capitalize())
+
+full_name_formatted = " ".join(capitalized_parts)  # "Marc Gillot", "Anne-Claire Thery"
+
+# 4. Extract first name for salutation
+first_name = capitalized_parts[0]  # "Marc", "Anne-Claire"
+```
+
+**OUTPUT REQUIREMENT:**
+
+Add to your preprocessing_verification:
+```json
+"name_parsing": {
+  "raw_full_name": "marc_gillot",
+  "parsed_full_name": "Marc Gillot",
+  "parsed_first_name": "Marc",
+  "salutation_to_use": "Marc"
+}
+```
+
+**EXAMPLES:**
+
+| raw_full_name | parsed_first_name | salutation |
+|---------------|-------------------|------------|
+| marc_gillot | Marc | "Bonjour Marc" |
+| anne-claire_thery | Anne-Claire | "Bonjour Anne-Claire" |
+| jean-pierre_dupont | Jean-Pierre | "Hello Jean-Pierre" |
+| marie_anne_castro | Marie Anne | "Bonjour Marie Anne" |
+
+**🚨 COMMON BUG TO AVOID:**
+
+❌ WRONG: Using raw name "Bonjour marc_gillot"
+✅ CORRECT: Parsing to "Bonjour Marc"
+
 ### OUTPUT: PREPROCESSING VERIFICATION
 
 Add to your output:
@@ -402,6 +574,12 @@ Add to your output:
     "scanned": true,
     "violations_found": 0,
     "violations_list": []
+  },
+  "name_parsing": {
+    "raw_full_name": "marc_gillot",
+    "parsed_full_name": "Marc Gillot",
+    "parsed_first_name": "Marc",
+    "salutation_to_use": "Marc"
   },
   "tone_selection": {
     "deal_type": "Client actif",
@@ -2171,6 +2349,38 @@ FORBIDDEN PATTERNS (EXPANDED)
 MESSAGE TEMPLATES BY SCENARIO
 ====================
 
+### V15.4: NAME PARSING LOGIC
+
+Contact names may come in various formats that need parsing:
+
+```
+PARSING RULES:
+1. Replace underscores with hyphens for compound first names:
+   - "anne-claire_thery" → first_name = "Anne-Claire"
+   - "jean_pierre_dupont" → first_name = "Jean-Pierre"
+
+2. Capitalize properly:
+   - "anne-claire" → "Anne-Claire"
+   - "BERTRAN" → "Bertran"
+
+3. Extract first name only for salutation:
+   - "marie anne_castro" → "Marie Anne" (full first name)
+   - "bertran_ruiz" → "Bertran"
+
+4. Handle edge cases:
+   - If name is all lowercase with underscore: split by underscore, take first part(s)
+   - If name contains space AND underscore: space separates first/middle, underscore separates last
+```
+
+**Output tracking (add to preprocessing_verification):**
+```json
+"name_parsing": {
+  "raw_full_name": "anne-claire_thery",
+  "parsed_first_name": "Anne-Claire",
+  "parsing_logic_applied": "underscore_to_hyphen + capitalize"
+}
+```
+
 ### Template 1: CLIENT ACTIF - Check-in avant meeting
 Salut [prénom],
 [Contexte du meeting prévu]. Tu veux qu'on prépare un point spécifique sur [topic identifié] ?
@@ -2203,6 +2413,24 @@ STRUCTURE (MANDATORY ORDER):
    - "Cela fait plusieurs mois depuis..."
    - "Ça fait un moment depuis notre échange sur..."
    - NEVER use "Suite à notre récent échange" for hooks > 30 days
+
+   ### V15.4: MEETING RESPONSIBILITY PHRASING (CRITICAL)
+
+   When referencing a meeting that didn't materialize, CHECK State Analyzer meeting_responsibility:
+
+   IF meeting_responsibility.invite_responsibility = "CONTACT":
+     ❌ WRONG: "On avait prévu de se parler mais ça n'a pas pu se faire" (sounds mutual)
+     ❌ WRONG: "On n'a pas réussi à se parler" (implies shared failure)
+     ✅ CORRECT: "Tu devais m'envoyer l'invite mais on s'est un peu perdus de vue"
+     ✅ CORRECT: "On s'était dit que tu m'envoyais l'invite calendrier"
+     ✅ ACCEPTABLE (soft): "Notre échange en septembre n'a pas abouti" (factual, no blame)
+
+   IF meeting_responsibility.invite_responsibility = "US":
+     ❌ WRONG: "Tu devais envoyer l'invite" (blaming them when it's our fault)
+     ✅ CORRECT: "Je devais t'envoyer l'invite et ça m'a échappé"
+     ✅ CORRECT: "J'avais dit que je te recontactais et ça m'a un peu échappé"
+
+   **RULE: When THEY dropped the ball, don't make it sound like a mutual failure.**
 
 2. REFERENCE_SPECIFIC_CONTEXT (required) - V11: INCLUDE STAKEHOLDERS
    - Mention specific people from last interaction (e.g., "avec Kasim")

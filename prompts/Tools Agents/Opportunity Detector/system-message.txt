@@ -43,7 +43,20 @@ HOOK_SCORING = {
   "budget_signal": {
     "base_score": 0.28,
     "description": "Budget or investment discussion",
-    "examples": ["Budget prévu Q1", "28,800€ discutés", "Investissement 2026"]
+    "examples": ["Budget prévu Q1", "28,800€ discutés", "Investissement 2026"],
+    "sub_types": {
+      "product_pricing": {
+        "description": "SaaS product/license pricing discussion",
+        "detection_keywords": ["licence", "abonnement", "subscription", "par utilisateur", "mensuel", "annuel"],
+        "label": "PRODUCT_PRICING"
+      },
+      "service_pricing": {
+        "description": "Accompaniment/consulting/implementation cost",
+        "detection_keywords": ["accompagnement", "consulting", "implémentation", "workshop", "formation", "deployment"],
+        "label": "SERVICE_PRICING"
+      }
+    },
+    "⚠️_CRITICAL_DISTINCTION": "When reporting 'pricing discussed', ALWAYS specify which type. '14,000€ accompagnement' is SERVICE_PRICING, NOT PRODUCT_PRICING."
   },
   "timeline_signal": {
     "base_score": 0.22,
@@ -940,6 +953,7 @@ For each hook found, record:
   "hook_id": "hook_001",
   "hook_source": "MEETING",
   "hook_source_field": "meeting_internal_note",
+  "source_activity_id": "96299200111",
   "hook_date": "2025-09-11T11:00:00+00:00",
   "hook_age_days": 96,
   "hook_age_category": "old",
@@ -950,6 +964,35 @@ For each hook found, record:
   "usability_reason": "Strong pain point with specific context"
 }
 ```
+
+### ⚠️ CRITICAL: PRICING HOOK DISTINCTION (V15.5)
+
+When extracting pricing/budget hooks, you MUST distinguish between:
+
+| Type | What it means | Examples |
+|------|---------------|----------|
+| PRODUCT_PRICING | SaaS product cost | "licence 28,800€", "subscription annuelle" |
+| SERVICE_PRICING | Consulting/implementation cost | "accompagnement 14,000€", "workshop setup" |
+
+**OUTPUT REQUIREMENT for pricing hooks:**
+
+```json
+{
+  "hook_id": "hook_pricing",
+  "hook_source": "CALL",
+  "source_activity_id": "96299200111",
+  "hook_type": "budget_signal",
+  "pricing_sub_type": "SERVICE_PRICING",
+  "pricing_clarification": "14,000€ is for accompagnement (workshops, implementation support), NOT product licensing",
+  "hook_quote": "coût estimé de 14 000 euros, incluant workshops et organisation",
+  "usable": true
+}
+```
+
+**🚨 COMMON BUG TO AVOID:**
+
+❌ WRONG: "pricing discussed (14,000€)" - Implies product pricing
+✅ CORRECT: "accompagnement cost discussed (14,000€ for workshops/implementation)"
 
 ### HOOK AGE CALCULATION:
 hook_age_days = (reference_date - hook_date) in days

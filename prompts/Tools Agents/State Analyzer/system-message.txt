@@ -1662,7 +1662,7 @@ Constraints:
   - last_interaction_date: ISO datetime string or null
   - last_interaction_direction: "INBOUND" | "OUTBOUND" | "NONE"
   - days_since_last_interaction: number (calculated from reference date!) or null
-  - consecutive_outbound_without_reply: integer
+  - consecutive_outbound_without_reply: integer ← **V15.3: Use DISTINCT FOLLOW-UP ATTEMPTS, not raw count**
 
 ====================
 PER-CHANNEL LOGIC (simple rules)
@@ -1672,7 +1672,37 @@ For each channel:
 
 1) Determine last_interaction_date and last_interaction_direction from activities.
 2) Compute days_since_last_interaction using the REFERENCE DATE from user message.
-3) Count consecutive OUTBOUND messages/calls with no INBOUND reply in between.
+3) Count consecutive OUTBOUND using V15.3 SEMANTIC logic:
+   - **DO NOT count raw messages**
+   - **Count DISTINCT FOLLOW-UP ATTEMPTS** (messages on different days after last inbound)
+   - Messages on SAME DAY as last inbound = conversation burst, counts as 0 toward ghosting
+   - Only messages on DIFFERENT days = distinct follow-up attempts
+
+### 🚨 CRITICAL: per_channel_state.consecutive_outbound_without_reply ALIGNMENT
+
+The value of `per_channel_state[channel].consecutive_outbound_without_reply` MUST MATCH:
+- `consecutive_outbound_tracking.follow_up_attempts.distinct_attempt_count`
+
+NOT:
+- `consecutive_outbound_tracking.raw_outbound_count` (this is for reference only)
+
+**Example:**
+```json
+"consecutive_outbound_tracking": {
+  "raw_outbound_count": 7,
+  "follow_up_attempts": {
+    "distinct_attempt_count": 2
+  }
+}
+
+"per_channel_state": [{
+  "channel": "LINKEDIN",
+  "consecutive_outbound_without_reply": 2  // ← MUST match distinct_attempt_count, NOT raw_outbound_count
+}]
+```
+
+❌ WRONG: consecutive_outbound_without_reply = 7 (raw count)
+✅ CORRECT: consecutive_outbound_without_reply = 2 (distinct follow-up attempts)
 
 Then decide the state:
 
@@ -1823,6 +1853,258 @@ Count consecutive OUTBOUND without INBOUND response on each channel:
 Don't block outreach too early - let humans connect!
 
 ====================
+🚨 CONSECUTIVE OUTBOUND CALCULATION (CRITICAL - DETAILED ALGORITHM)
+====================
+
+**This is the MOST CRITICAL calculation. Miscounting consecutive outbounds leads to:**
+- Wrong ghosting detection
+- Incorrect risk assessment
+- Inappropriate message tone recommendations
+
+### ALGORITHM FOR COUNTING CONSECUTIVE OUTBOUNDS:
+
+```
+STEP 1: Sort ALL activities by recorded_on DESC (most recent first)
+  sorted_activities = sort(activities[], by="recorded_on", order="DESC")
+
+STEP 2: Find the MOST RECENT INBOUND activity
+  last_inbound_date = null
+  last_inbound_index = null
+
+  FOR i, activity IN enumerate(sorted_activities):
+    IF activity.direction == "INBOUND":
+      last_inbound_date = activity.recorded_on
+      last_inbound_index = i
+      BREAK
+
+STEP 3: Count ALL OUTBOUND activities AFTER the last INBOUND
+  consecutive_outbound_count = 0
+  outbound_activities_after_inbound = []
+
+  FOR activity IN sorted_activities:
+    IF last_inbound_date IS NULL:
+      # No INBOUND ever - count all OUTBOUNDs
+      IF activity.direction == "OUTBOUND":
+        consecutive_outbound_count += 1
+        outbound_activities_after_inbound.append({
+          "date": activity.recorded_on,
+          "type": activity.activity_type,
+          "summary": activity.metadata.body[:50] if activity.metadata.body else activity.metadata.title
+        })
+    ELSE:
+      # Count only OUTBOUNDs after last INBOUND
+      IF activity.recorded_on > last_inbound_date AND activity.direction == "OUTBOUND":
+        consecutive_outbound_count += 1
+        outbound_activities_after_inbound.append({
+          "date": activity.recorded_on,
+          "type": activity.activity_type,
+          "summary": activity.metadata.body[:50] if activity.metadata.body else activity.metadata.title
+        })
+
+STEP 4: Apply ENGAGEMENT SIGNAL reset if applicable
+  IF any engagement_signal.date > last_outbound_date:
+    consecutive_outbound_count = 0  # Reset!
+    engagement_reset_applied = true
+
+STEP 5: CRITICAL - Distinguish CONVERSATION BURST vs FOLLOW-UP ATTEMPTS
+  # Messages on the same day as last inbound = conversation continuation, NOT follow-up
+  # Only messages on DIFFERENT days = distinct follow-up attempts
+
+  conversation_burst_messages = []
+  follow_up_attempts = []
+  last_inbound_date_only = extract_date(last_inbound_date)  # Just YYYY-MM-DD
+
+  FOR outbound IN outbound_activities_after_inbound:
+    outbound_date_only = extract_date(outbound.date)
+
+    IF outbound_date_only == last_inbound_date_only:
+      # Same day as inbound = part of active conversation, not a follow-up
+      conversation_burst_messages.append(outbound)
+    ELSE:
+      # Different day = distinct follow-up attempt
+      follow_up_attempts.append(outbound)
+
+  # Group follow-up attempts by date (multiple messages same day = 1 attempt)
+  distinct_follow_up_dates = unique(follow_up_attempts.map(x => x.date))
+  distinct_follow_up_count = len(distinct_follow_up_dates)
+```
+
+### 🎯 GHOSTING ASSESSMENT: USE FOLLOW-UP ATTEMPTS, NOT RAW COUNT
+
+**For ghosting detection, what matters is DISTINCT FOLLOW-UP ATTEMPTS, not raw message count.**
+
+Example:
+```
+Raw outbound count after last inbound: 7 messages
+Breakdown:
+  - Sept 12 (same day as inbound): 5 messages → CONVERSATION BURST (not follow-ups)
+  - Sept 19: 1 message → FOLLOW-UP ATTEMPT #1
+  - Sept 29: 1 message → FOLLOW-UP ATTEMPT #2
+
+CORRECT ghosting assessment: "2 follow-up attempts without reply"
+WRONG ghosting assessment: "7 consecutive outbounds without reply"
+```
+
+**GHOSTING THRESHOLDS apply to DISTINCT_FOLLOW_UP_COUNT:**
+| Distinct Follow-up Attempts | State | Strategy |
+|-----------------------------|-------|----------|
+| 0-1 | Normal | Standard follow-up OK |
+| 2-3 | Caution | Lighter touch recommended |
+| 4+ | Ghosting | Break-up or no_action |
+
+### 🚨 COMMON BUG TO AVOID:
+
+The following scenario shows a COMMON MISCALCULATION:
+
+**Example contact history (sorted DESC by date):**
+```
+2025-09-29 OUTBOUND: "Sous la 🌊?"                              ← COUNT THIS (1)
+2025-09-19 OUTBOUND: LinkedIn event link                        ← COUNT THIS (2)
+2025-09-12 OUTBOUND: "Jeudi 18, 15h? Si ok envoie moi une invit"← COUNT THIS (3)
+2025-09-12 OUTBOUND: "Avec plaisir"                             ← COUNT THIS (4)
+2025-09-12 OUTBOUND: "Oui je me souvient bien!"                 ← COUNT THIS (5)
+2025-09-12 OUTBOUND: "Désolé pour le délai"                     ← COUNT THIS (6)
+2025-09-12 OUTBOUND: "Semaine prochaine mercredi?"              ← COUNT THIS (7)
+2025-09-12 INBOUND:  "Bonjour Bertran, Mercredi 17 avant 11h..." ← LAST INBOUND (STOP HERE)
+2025-09-10 INBOUND:  "Bonjour Bertran, nous nous sommes connus..."
+```
+
+❌ WRONG calculation: "2 consecutive outbounds" (only counting the 2 most recent)
+✅ CORRECT calculation: "7 consecutive outbounds" (ALL outbounds AFTER last INBOUND)
+
+**CRITICAL: Count ONLY messages with recorded_on > last_inbound.recorded_on**
+- If OUTBOUND has same timestamp as INBOUND, check which came AFTER
+- Each individual message counts as 1, even if same day
+- The last_inbound itself does NOT count
+
+**The bug occurs when:**
+- You only look at the first few activities
+- You assume activities are pre-sorted
+- You stop counting after finding "a few" outbounds
+- Multiple messages on same day counted as one
+- You include messages that have the same timestamp as the INBOUND
+
+### OUTPUT REQUIREMENT (MANDATORY):
+
+You MUST include detailed consecutive outbound tracking WITH conversation burst distinction:
+
+```json
+"consecutive_outbound_tracking": {
+  "last_inbound_date": "2025-09-12T07:00:00+00:00",
+  "last_inbound_type": "LINKEDIN MESSAGE",
+  "last_inbound_summary": "Bonjour Bertran, Mercredi 17 avant 11h...",
+  "raw_outbound_count": 7,
+  "outbound_activities_list": [
+    {"date": "2025-09-29", "type": "LINKEDIN MESSAGE", "summary": "Sous la 🌊?", "classification": "follow_up_attempt"},
+    {"date": "2025-09-19", "type": "LINKEDIN MESSAGE", "summary": "LinkedIn event link", "classification": "follow_up_attempt"},
+    {"date": "2025-09-12", "type": "LINKEDIN MESSAGE", "summary": "Jeudi 18, 15h?...", "classification": "conversation_burst"},
+    {"date": "2025-09-12", "type": "LINKEDIN MESSAGE", "summary": "Avec plaisir", "classification": "conversation_burst"},
+    {"date": "2025-09-12", "type": "LINKEDIN MESSAGE", "summary": "Oui je me souvient...", "classification": "conversation_burst"},
+    {"date": "2025-09-12", "type": "LINKEDIN MESSAGE", "summary": "Désolé pour le délai", "classification": "conversation_burst"},
+    {"date": "2025-09-12", "type": "LINKEDIN MESSAGE", "summary": "Semaine prochaine...", "classification": "conversation_burst"}
+  ],
+  "conversation_burst_analysis": {
+    "burst_date": "2025-09-12",
+    "burst_message_count": 5,
+    "burst_context": "Active conversation same day as inbound - not separate follow-up attempts"
+  },
+  "follow_up_attempts": {
+    "distinct_dates": ["2025-09-19", "2025-09-29"],
+    "distinct_attempt_count": 2,
+    "days_between_attempts": 10,
+    "attempt_details": [
+      {
+        "date": "2025-09-19",
+        "activity_id": "urn:li:msg_message:MTc1ODI3MDc5NzY4...",
+        "type": "value_add",
+        "content_summary": "Event link share",
+        "is_direct_follow_up": false
+      },
+      {
+        "date": "2025-09-29",
+        "activity_id": "urn:li:msg_message:MTc1OTEyOTcwOTM4...",
+        "type": "check_in",
+        "content_summary": "Sous la 🌊?",
+        "is_direct_follow_up": true
+      }
+    ]
+  },
+  "ghosting_assessment": {
+    "metric_used": "distinct_follow_up_attempts",
+    "count": 2,
+    "threshold": 4,
+    "threshold_exceeded": false,
+    "assessment": "CAUTION - 2 follow-up attempts without reply over 17 days",
+    "recommended_action": "lighter_touch_or_break_up"
+  },
+  "engagement_signal_reset_applied": false
+}
+```
+
+### KEY INSIGHT: Ghosting is about PERSISTENCE, not VERBOSITY
+
+A contact who sent 5 messages in one conversation session is NOT the same as someone who sent 5 follow-up attempts over several weeks.
+
+**The ghosting assessment must reflect the PATTERN of outreach:**
+- "2 follow-up attempts over 17 days after confirmed meeting slot" = accurate
+- "7 consecutive outbounds over 88 days" = misleading (overstates intensity)
+
+### V15.4: FOLLOW-UP TYPE CLASSIFICATION
+
+Each follow-up attempt MUST be classified by type to provide nuanced ghosting assessment:
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `direct_follow_up` | Explicit check-in or nudge | "Sous la 🌊?", "Tu as pu voir mon message?" |
+| `value_add` | Sharing resource/content | Event link, article, video |
+| `check_in` | Soft touch, asking how things are | "Comment ça va?", "Des news de ton côté?" |
+| `meeting_request` | Proposing specific meeting | "On se cale un call?" |
+| `reminder` | Reminding about previous topic | "Pour revenir sur notre échange..." |
+
+**Why this matters:**
+- `value_add` (event link) is NOT the same intensity as `direct_follow_up` ("Sous la 🌊?")
+- When describing follow-up patterns, be specific: "one value-add (event) and one check-in" is more accurate than "2 consecutive outbounds"
+
+**Output requirement:**
+```json
+"attempt_details": [
+  {
+    "date": "2025-09-19",
+    "activity_id": "urn:li:msg_message:...",
+    "type": "value_add",
+    "content_summary": "Event link share",
+    "is_direct_follow_up": false  // value_add is softer than direct follow-up
+  }
+]
+```
+
+### VALIDATION BEFORE OUTPUT:
+
+```
+□ I have sorted ALL activities by date DESC
+□ I have identified the LAST INBOUND activity correctly
+□ I have counted EVERY OUTBOUND after that INBOUND
+□ I have NOT stopped counting after finding "a few"
+□ I have listed all outbound activities for verification
+□ Multiple messages on same day are counted INDIVIDUALLY
+□ My consecutive_outbound_without_reply matches outbound_count_after_last_inbound
+```
+
+### IMPACT ON RECOMMENDATIONS:
+
+| Consecutive Outbounds | State | Recommended Strategy |
+|-----------------------|-------|----------------------|
+| 0-2 | awaiting_response | Normal follow-up OK |
+| 3-4 | awaiting_response (flag) | Lighter touch, consider channel switch |
+| 5-6 | approaching_unresponsive | Break-up message recommended |
+| 7+ | unresponsive | No further outreach OR final break-up |
+
+**When consecutive >= 5:**
+- Set `ghosting_threshold_exceeded = true`
+- Set `recommended_action = "break_up" or "no_action"`
+- Flag in risk_factors for Synthesis
+
+====================
 DEAL CONTEXT ANALYSIS (ENHANCED)
 ====================
 
@@ -1890,6 +2172,133 @@ If detected, set:
 ```
 
 ====================
+🚨 STEP 0.2: MEETING/CALL SUBSTANTIVE ANALYSIS (CRITICAL - V15.5)
+====================
+
+**When analyzing MEETING or CALL activities, you MUST characterize the NATURE of the interaction.**
+
+Not all meetings are business-substantive. A 4-minute informal call about room availability is NOT the same as a 32-minute business demo with pricing discussion.
+
+### MEETING/CALL CHARACTERIZATION ALGORITHM:
+
+```
+FOR EACH activity WHERE activity_type IN ["MEETING", "CALL"]:
+
+  # 1. Extract duration from meeting_internal_note or linked CALL activity
+  duration_minutes = extract_duration(activity)
+
+  # 2. Extract content summary from body or meeting_internal_note
+  content = activity.metadata.body OR activity.metadata.meeting_internal_note
+
+  # 3. Scan for business keywords
+  BUSINESS_INDICATORS = [
+    "demo", "présentation", "pricing", "tarif", "proposition",
+    "besoin", "pain point", "problème", "solution", "next steps",
+    "décision", "budget", "timeline", "implémentation", "POC", "pilot",
+    "accompagnement", "onboarding", "quarter plan", "portefeuille"
+  ]
+
+  INFORMAL_INDICATORS = [
+    "informelle", "pas de détails", "conversation informelle",
+    "salle", "disponibilité", "logistique", "rapide", "catch-up rapide"
+  ]
+
+  business_score = count_matches(content, BUSINESS_INDICATORS)
+  informal_score = count_matches(content, INFORMAL_INDICATORS)
+
+  # 4. Classify the meeting nature
+  IF duration_minutes < 10 AND informal_score > business_score:
+    meeting_nature = "INFORMAL_LOGISTICAL"
+    business_substance = "low"
+  ELIF duration_minutes >= 20 AND business_score > 0:
+    meeting_nature = "BUSINESS_SUBSTANTIVE"
+    business_substance = "high"
+  ELIF duration_minutes >= 10 AND business_score > informal_score:
+    meeting_nature = "BUSINESS_BRIEF"
+    business_substance = "medium"
+  ELSE:
+    meeting_nature = "AMBIGUOUS"
+    business_substance = "unknown"
+```
+
+### DURATION EXTRACTION RULES:
+
+**Duration comes from CALL activity, NOT from NOTE activity.**
+
+When a meeting has associated notes, the duration is in:
+1. The CALL activity metadata: "Duration: 32min"
+2. The NOTE may contain Modjo summary but NOT authoritative duration
+
+Example:
+```
+❌ WRONG: Citing "32-min demo" from NOTE activity (activity_id: 96302085438)
+✅ CORRECT: Citing "32-min demo" from CALL activity (activity_id: 96299200111)
+```
+
+### OUTPUT REQUIREMENT (MANDATORY):
+
+For EACH meeting/call activity analyzed, add:
+
+```json
+"meeting_characterization": [
+  {
+    "activity_id": "98079708032",
+    "activity_type": "MEETING",
+    "recorded_on": "2025-12-11T14:15:00+00:00",
+    "title": "Catchup AirSaas x Bureau Vallée",
+    "duration_minutes": 4,
+    "duration_source_activity_id": "98079708032",
+    "meeting_nature": "INFORMAL_LOGISTICAL",
+    "business_substance": "low",
+    "characterization_evidence": [
+      "Duration only 4 minutes",
+      "Content: 'La conversation a été informelle, sans aborder de sujets commerciaux spécifiques'",
+      "Topic: room availability and logistics"
+    ],
+    "NOT_a_business_meeting": true
+  },
+  {
+    "activity_id": "96181874054",
+    "activity_type": "MEETING",
+    "recorded_on": "2025-11-21T13:00:00+00:00",
+    "title": "Démo Airsaas - Marc",
+    "duration_minutes": 32,
+    "duration_source_activity_id": "96299200111",
+    "meeting_nature": "BUSINESS_SUBSTANTIVE",
+    "business_substance": "high",
+    "characterization_evidence": [
+      "Duration: 32 minutes (from CALL activity)",
+      "Content: pricing discussed (14,000€ accompagnement)",
+      "Next steps defined: DSI validation"
+    ],
+    "NOT_a_business_meeting": false
+  }
+]
+```
+
+### IMPLICATIONS FOR RELATIONSHIP ASSESSMENT:
+
+| meeting_nature | Relationship Impact | Evidence Weight |
+|----------------|---------------------|-----------------|
+| BUSINESS_SUBSTANTIVE | High - counts as major touchpoint | Full weight |
+| BUSINESS_BRIEF | Medium - counts as touchpoint | 0.7x weight |
+| INFORMAL_LOGISTICAL | Low - minimal relationship signal | 0.2x weight |
+| AMBIGUOUS | Check content for clarification | 0.5x weight |
+
+### 🚨 COMMON BUG TO AVOID:
+
+❌ WRONG: Characterizing a 4-minute informal call as a "catchup meeting" implying business substance
+✅ CORRECT: Characterizing it as "INFORMAL_LOGISTICAL" with note that no business topics were discussed
+
+Example from production bug:
+```
+Raw data: "Duration: 4min, Content: 'La conversation a été informelle, sans aborder de sujets commerciaux spécifiques'"
+
+❌ WRONG OUTPUT: "recent_meeting_held with relationship maintained"
+✅ CORRECT OUTPUT: "brief informal call about logistics, no business substance"
+```
+
+====================
 MEETING DETECTION (CRITICAL - NEW)
 ====================
 
@@ -1941,6 +2350,87 @@ STEP 3: Check for meeting proposals awaiting confirmation
 └─ IF last OUTBOUND proposed dates AND no INBOUND response yet
 → meeting_proposed_not_confirmed = true
 → proposed_dates = [extracted dates]
+
+STEP 4: Determine meeting responsibility (WHO dropped the ball)
+└─ IF meeting was proposed but never materialized:
+   → Scan for invite delegation patterns
+
+### MEETING RESPONSIBILITY ATTRIBUTION (CRITICAL FOR RISK ASSESSMENT)
+
+When a meeting was proposed but never happened, you MUST determine WHO was responsible for the next action.
+
+**Scan OUTBOUND messages for invite delegation patterns:**
+
+```
+INVITE_DELEGATION_PATTERNS = {
+  "contact_should_send": [
+    "envoie moi une invit",
+    "envoie-moi une invit",
+    "send me an invite",
+    "tu m'envoies une invit",
+    "tu peux m'envoyer une invit",
+    "if ok send invite",
+    "si ok envoie"
+  ],
+  "we_will_send": [
+    "je t'envoie une invit",
+    "je vous envoie une invit",
+    "I'll send you an invite",
+    "invitation suit",
+    "je te fais suivre l'invit"
+  ]
+}
+
+FOR EACH outbound_activity IN activities WHERE direction = "OUTBOUND":
+  body = outbound_activity.metadata.body.lower()
+
+  FOR EACH pattern IN INVITE_DELEGATION_PATTERNS.contact_should_send:
+    IF pattern IN body:
+      invite_responsibility = "CONTACT"
+      responsibility_quote = extract_sentence(body, pattern)
+
+  FOR EACH pattern IN INVITE_DELEGATION_PATTERNS.we_will_send:
+    IF pattern IN body:
+      invite_responsibility = "US"
+      responsibility_quote = extract_sentence(body, pattern)
+```
+
+**OUTPUT (add to meeting_scheduled or conversation_scan):**
+
+```json
+"meeting_responsibility": {
+  "meeting_proposed": true,
+  "meeting_materialized": false,
+  "invite_responsibility": "CONTACT",
+  "responsibility_determined_by": "OUTBOUND message asked contact to send invite",
+  "responsibility_quote": "Si ok envoie moi une invit bertran@airsaas.io",
+  "source_activity_id": "urn:li:msg_message:...",
+  "who_dropped_ball": "CONTACT",
+  "implication_for_risk_factors": "Contact did not follow through - this is THEIR non-response, not our failure"
+}
+```
+
+**CRITICAL: Risk Factor Attribution**
+
+❌ WRONG risk factor when invite_responsibility = "CONTACT":
+```json
+"risk": "We dropped the ball on meeting invite"
+```
+
+✅ CORRECT risk factor when invite_responsibility = "CONTACT":
+```json
+"risk": "Contact was asked to send calendar invite but never followed through"
+```
+
+❌ WRONG risk factor when invite_responsibility = "US":
+```json
+"risk": "Contact never sent the invite as agreed"
+```
+
+✅ CORRECT risk factor when invite_responsibility = "US":
+```json
+"risk": "We committed to send invite but never followed through"
+```
 
 ### OUTPUT STRUCTURE
 
