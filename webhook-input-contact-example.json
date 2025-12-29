@@ -988,7 +988,7 @@
           64
         ],
         "id": "1cca17f2-dcce-4935-94b7-69c86a7420d5",
-        "name": "Orchestrator Wave 1 Evaluation (old)",
+        "name": "Orchestrator Wave 1 Evaluation",
         "executeOnce": true,
         "retryOnFail": true,
         "waitBetweenTries": 300,
@@ -1060,7 +1060,7 @@
         "main": [
           [
             {
-              "node": "Orchestrator Wave 1 Evaluation (old)",
+              "node": "Orchestrator Wave 1 Evaluation",
               "type": "main",
               "index": 0
             }
@@ -1312,7 +1312,7 @@
           ]
         ]
       },
-      "Orchestrator Wave 1 Evaluation (old)": {
+      "Orchestrator Wave 1 Evaluation": {
         "main": [
           [
             {
