@@ -12,6 +12,9 @@ Sales-IA analyzes CRM contacts and generates personalized outreach recommendatio
 
 ```
 INPUT (Webhook POST /parallel-kam-agent)
+    → Get resources (Google Sheets)
+    → Get practices (Google Sheets)
+    → Merge GSheet Data
     → Generate UUID + Respond to Webhook
     → Save data call
     → WAVE 1 (4 Analysis Agents called in parallel)
@@ -24,7 +27,7 @@ INPUT (Webhook POST /parallel-kam-agent)
     → Merge Wave2_results
     → WAVE 3 (Orchestrator Synthesis)
     → Parse JSON
-    → Save to Supabase
+    → Save to Supabase (2 tables) + Collect Workflow Run + Evaluate Decision
     → Notify via Slack/Zapier
 ```
 
@@ -32,44 +35,66 @@ INPUT (Webhook POST /parallel-kam-agent)
 
 ```mermaid
 flowchart TB
-    subgraph WAVE1["WAVE 1: ANALYSIS (Parallel)"]
-        direction TB
+    subgraph GSHEET["📊 GOOGLE SHEETS"]
+        GR["Get resources"]
+        GP["Get practices"]
+        MGS["Merge GSheet Data"]
+        GR --> GP --> MGS
+    end
+
+    subgraph INIT["⚙️ INIT"]
+        UUID["Generate UUID"]
         SDC["Save data call"]
-        T1["Call Context Analyzer<br/>executeWorkflow"]
-        T2["Call Opportunity Detector<br/>executeWorkflow"]
-        T3["Call State Analyzer<br/>executeWorkflow"]
-        T4["Call Timing Strategist<br/>executeWorkflow"]
+        MGS --> UUID --> SDC
+    end
+
+    subgraph WAVE1["🔵 WAVE 1: ANALYSIS (Parallel)"]
+        direction TB
+        T1["Call Context Analyzer"]
+        T2["Call Opportunity Detector"]
+        T3["Call State Analyzer"]
+        T4["Call Timing Strategist"]
         M1["Wave1_results<br/>Merge"]
         SDC --> T1 & T2 & T3 & T4
         T1 & T2 & T3 & T4 --> M1
     end
 
-    subgraph EVAL["WAVE 1 EVALUATION"]
+    subgraph EVAL["🔍 WAVE 1 EVALUATION"]
         OWE["Orchestrator Wave 1 Evaluation<br/>Claude Opus 4.5"]
         SW{{"Retry Wave 1?<br/>Switch"}}
         M1 --> OWE
         OWE --> SW
     end
 
-    subgraph WAVE2["WAVE 2: EXECUTION (Parallel)"]
+    subgraph WAVE2["🟠 WAVE 2: EXECUTION (Parallel)"]
         direction TB
         GH["Get historical recommendations"]
-        T5["Call channel selector<br/>executeWorkflow"]
-        T6["Call Content Generator<br/>executeWorkflow"]
-        T7["Call Sequence Strategist<br/>executeWorkflow"]
+        T5["Call channel selector"]
+        T6["Call Content Generator"]
+        T7["Call Sequence Strategist"]
         M2["Wave2_results<br/>Merge"]
         SW -->|"continue"| GH & T5 & T7
         GH --> T6
         T5 & T6 & T7 --> M2
     end
 
-    subgraph RETRY["RETRY LOGIC"]
+    subgraph RETRY["🔄 RETRY LOGIC"]
         SW -->|"retry"| LOOP["Loop to Generate UUID"]
+        LOOP --> UUID
     end
 
-    subgraph WAVE3["WAVE 3: SYNTHESIS"]
+    subgraph WAVE3["🟢 WAVE 3: SYNTHESIS"]
         OS["Orchestrator Synthesis<br/>Claude Opus 4.5"]
         M2 --> OS
+    end
+
+    subgraph OUTPUT["📤 OUTPUT"]
+        PJ["Parse JSON"]
+        SV["Save to Supabase"]
+        ED["Evaluate Decision"]
+        ZAP["Slack/Zapier"]
+        OS --> PJ --> SV & ED
+        SV --> ZAP
     end
 ```
 
@@ -118,8 +143,9 @@ flowchart TB
 | Component | Technology |
 |-----------|------------|
 | Platform | n8n (workflow automation) |
-| AI Models | Claude Sonnet 4, Claude Opus 4.5 |
+| AI Models | Claude Opus 4.5 |
 | Database | Supabase (PostgreSQL) |
+| External Data | Google Sheets (resources & best practices) |
 | Notifications | Slack via Zapier |
 | CRM | HubSpot-compatible structure |
 
@@ -170,9 +196,30 @@ curl -X POST https://your-n8n/webhook/parallel-kam-agent \
 | `break_up` | 5+ outbounds without response |
 | `no_action` | Contact opted out or invalid |
 
-## V14 Features (Latest)
+## V15.5 Features (Latest)
 
-### Multi-Deal Detection
+### Google Sheets Integration
+Resources catalog and best practices are now fetched from Google Sheets:
+- **Resources**: Matched to opportunities for relevant content suggestions
+- **Best Practices**: Used by Content Generator for message quality
+
+### Decision Evaluation
+Post-synthesis, decisions are evaluated for quality by a separate Claude call:
+- Logs evaluation results for continuous improvement
+- Workflow run data saved to Supabase for analytics
+
+### V15.3 Semantic Outbound Analysis
+Distinguishes between conversation bursts and follow-up attempts:
+- Messages on same day as inbound = conversation (not separate outreach)
+- Messages on different days = distinct follow-up attempts
+- Ghosting thresholds now use distinct follow-up count
+
+### V15.1 Bug Fixes
+- Consecutive outbound counting now uses semantic analysis
+- Question count validation (max 1 question per message)
+- Meeting responsibility attribution
+
+### Multi-Deal Detection (V14)
 Contacts may have multiple deals. System detects all deals and prioritizes:
 - **OPEN deal** takes priority → Active prospect messaging
 - **CLOSED_WON** → Customer success messaging
@@ -194,13 +241,15 @@ Scans email bodies for contract termination signals:
 - Detects meeting cancellations post-churn
 - Extracts future recontact timing ("automne 2026")
 
-### Synthesis Safety Checks
-5 validation checks before final output:
-1. Multi-Deal Consistency
+### Synthesis Safety Checks (V15.0+)
+7 validation checks before final output:
+1. Unclosed Loops (unfulfilled promises)
 2. Multi-Owner Coordination
-3. Scheduled Touchpoint Respect
-4. Temporal Reference Accuracy
-5. Activity Recency Sanity
+3. Temporal Reference Accuracy
+4. Open Deal Template Consistency
+5. Churn Signal Detection
+6. Question Count Validation (V15.1)
+7. Meeting Responsibility Attribution (V15.2)
 
 ## Documentation
 

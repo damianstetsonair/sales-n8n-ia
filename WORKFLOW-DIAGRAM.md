@@ -4,7 +4,7 @@
 
 This document is the **exact photograph** of the n8n workflow for AI agents to understand the system architecture without parsing the full JSON.
 
-**Last verified**: 2025-12-22 against `n8n-workflow.json` (V14 features added)
+**Last verified**: 2025-12-29 against `n8n-workflow.json` (V15.5 features added)
 **Estimated execution time**: ~10 minutes per contact
 
 ---
@@ -13,6 +13,9 @@ This document is the **exact photograph** of the n8n workflow for AI agents to u
 
 ```
 INPUT (Webhook POST /parallel-kam-agent)
+    → Get resources (Google Sheets)
+    → Get practices (Google Sheets)
+    → Merge GSheet Data
     → Generate UUID + Respond to Webhook
     → Save data call
     → WAVE 1 (4 Analysis Agents called in parallel)
@@ -21,11 +24,11 @@ INPUT (Webhook POST /parallel-kam-agent)
     → Parse evaluation JSON
     → Retry Switch (continue or retry)
     → IF continue: Get historical recommendations + WAVE 2 (3 Action Agents)
-    → IF retry: Loop back to Generate UUID (max 2 iterations)
+    → IF retry: Loop back to Generate UUID (max 3 iterations)
     → Merge Wave2_results
     → WAVE 3 (Orchestrator Synthesis)
     → Parse JSON
-    → Save to Supabase
+    → Save to Supabase (2 tables) + Collect Workflow Run + Evaluate Decision
     → Notify via Slack/Zapier
 ```
 
@@ -39,10 +42,16 @@ flowchart TB
         WH[("Webhook<br/>POST /parallel-kam-agent<br/>responseMode: responseNode")]
     end
 
+    subgraph GSHEET["📊 GOOGLE SHEETS DATA"]
+        GR["Get resources<br/>Google Sheets<br/>Resources catalog"]
+        GP["Get practices<br/>Google Sheets<br/>Best practices"]
+        MGS["Merge GSheet Data<br/>Combines resources + practices"]
+    end
+
     subgraph INIT["⚙️ INITIALIZATION"]
         UUID["Generate UUID<br/>Crypto node<br/>Generates session_id"]
         RESP["Respond to Webhook<br/>Returns session_id immediately<br/>'~10 minutes, please wait...'"]
-        SDC["Save data call<br/>Set node<br/>Prepares data structure<br/>with session_id"]
+        SDC["Save data call<br/>Set node<br/>Prepares data structure<br/>with session_id + resources_context + best_practices_context"]
     end
 
     subgraph WAVE1["🔵 WAVE 1: ANALYSIS (Parallel Execution)"]
@@ -89,11 +98,18 @@ flowchart TB
         PJ["Parse JSON<br/>Code node<br/>Extracts final_decision<br/>Adds owner_name, linkedin_url"]
         SV1["Save final decision into table<br/>Supabase INSERT: final_decision<br/>retryOnFail: true"]
         SV2["Save final decision reference<br/>Supabase UPDATE: n8n_orchestrator_synthesis<br/>(no downstream connection)"]
+        CWR["Collect Workflow Run<br/>Code node<br/>Collects run data"]
+        SWR["Save Workflow Run<br/>Supabase INSERT"]
+        ED["Evaluate Decision<br/>Anthropic Claude<br/>Quality assessment"]
+        PEJ2["Parse evaluator JSON<br/>Code node"]
         ZAP["Send to Zapier for Slack<br/>POST to Zapier webhook"]
     end
 
     %% EXACT CONNECTIONS from n8n-workflow.json
-    WH -->|"main[0]"| UUID
+    WH -->|"main[0]"| GR
+    GR --> GP
+    GP --> MGS
+    MGS --> UUID
     UUID --> RESP
     UUID --> SDC
     RESP --> SDC
@@ -128,10 +144,15 @@ flowchart TB
     OS --> PJ
     PJ -->|"main[0]"| SV2
     PJ -->|"main[0]"| SV1
+    PJ -->|"main[0]"| CWR
+    PJ -->|"main[0]"| ED
+    CWR --> SWR
+    ED --> PEJ2
     SV1 --> ZAP
 
     %% Styling
     classDef trigger fill:#e1f5fe,stroke:#01579b
+    classDef gsheet fill:#e8f5e9,stroke:#43a047
     classDef init fill:#f5f5f5,stroke:#616161
     classDef wave1 fill:#e3f2fd,stroke:#1565c0
     classDef eval fill:#fff9c4,stroke:#f9a825
@@ -142,44 +163,52 @@ flowchart TB
     classDef hist fill:#e0f2f1,stroke:#00695c
 
     class WH trigger
+    class GR,GP,MGS gsheet
     class UUID,RESP,SDC init
     class T1,T2,T3,T4,M1 wave1
     class OWE,PEJ eval
     class T5,T6,T7,M2 wave2
     class OS wave3
     class SW,LOOP retry
-    class PJ,SV1,SV2,ZAP output
+    class PJ,SV1,SV2,CWR,SWR,ED,PEJ2,ZAP output
     class GH hist
 ```
 
 ---
 
-## Complete Node List (18 nodes total)
+## Complete Node List (27 nodes total)
 
 | # | Node Name | Type | Key Parameters |
 |---|-----------|------|----------------|
 | 1 | Webhook | webhook | POST /parallel-kam-agent, responseMode: responseNode |
-| 2 | Generate UUID | crypto | Generates session_id |
-| 3 | Respond to Webhook with session_id | respondToWebhook | Returns session_id, "~10 min wait" |
-| 4 | Save data call | set | Prepares data structure with session_id |
-| 5 | Call Context Analyzer | executeWorkflow | Sub-workflow AvvHbsi6znhLenHt, input: Save data call |
-| 6 | Call Opportunity Detector | executeWorkflow | Sub-workflow x8FhUOAPaob2UAsD, input: Save data call |
-| 7 | Call State Analyzer | executeWorkflow | Sub-workflow p5j7uHQGG4MXtzDQ, input: Save data call |
-| 8 | Call Timing Strategist | executeWorkflow | Sub-workflow SA9CbSZ6gG4VbLr3, input: Save data call |
-| 9 | Wave1_results | merge | Merges 4 Wave 1 agent outputs |
-| 10 | Orchestrator Wave 1 Evaluation | anthropic | Opus 4.5, temp 0.1, maxTokens 15000, validates Wave 1 |
-| 11 | Parse evaluation JSON | code | Extracts evaluation_decision.action |
-| 12 | Retry Wave 1? | switch | Output 0: continue, Output 1: retry wave |
-| 13 | Get historical recommendations | supabase | getAll, limit 10, validated only, executeOnce |
-| 14 | Call channel selector | executeWorkflow | Sub-workflow IranprNKAkWymI1n, input: Wave1_results + Webhook |
-| 15 | Call Content Generator | executeWorkflow | Sub-workflow SD8ssifoO3WmgV6E, input: Wave1_results + Webhook + Historical |
-| 16 | Call Sequence Strategist | executeWorkflow | Sub-workflow 9yaALVGtzyMSW3tm, input: Wave1_results + Webhook |
-| 17 | Wave2_results | merge | Merges 3 Wave 2 agent outputs |
-| 18 | Orchestrator Synthesis | anthropic | Opus 4.5, temp 0.6, maxTokens 10000, executeOnce |
-| 19 | Parse JSON | code | Extracts final_decision, adds metadata |
-| 20 | Save final decision reference | supabase | UPDATE n8n_orchestrator_synthesis |
-| 21 | Save final decision into table | supabase | INSERT final_decision, retryOnFail |
-| 22 | Send to Zapier for Slack | httpRequest | POST to Zapier webhook |
+| 2 | Get resources | googleSheets | Fetches resources catalog from Google Sheets |
+| 3 | Get practices | googleSheets | Fetches best practices from Google Sheets |
+| 4 | Merge GSheet Data | merge | Combines resources + practices into context |
+| 5 | Generate UUID | crypto | Generates session_id |
+| 6 | Respond to Webhook with session_id | respondToWebhook | Returns session_id, "~10 min wait" |
+| 7 | Save data call | set | Prepares data structure with session_id + resources_context + best_practices_context |
+| 8 | Call Context Analyzer | executeWorkflow | Sub-workflow AvvHbsi6znhLenHt, input: Save data call |
+| 9 | Call Opportunity Detector | executeWorkflow | Sub-workflow x8FhUOAPaob2UAsD, input: Save data call + resources_context |
+| 10 | Call State Analyzer | executeWorkflow | Sub-workflow p5j7uHQGG4MXtzDQ, input: Save data call |
+| 11 | Call Timing Strategist | executeWorkflow | Sub-workflow SA9CbSZ6gG4VbLr3, input: Save data call |
+| 12 | Wave1_results | merge | Merges 4 Wave 1 agent outputs |
+| 13 | Orchestrator Wave 1 Evaluation | anthropic | Opus 4.5, temp 0.1, maxTokens 15000, validates Wave 1 |
+| 14 | Parse evaluation JSON | code | Extracts evaluation_decision.action |
+| 15 | Retry Wave 1? | switch | Output 0: continue, Output 1: retry wave |
+| 16 | Get historical recommendations | supabase | getAll, limit 10, validated only, executeOnce |
+| 17 | Call channel selector | executeWorkflow | Sub-workflow IranprNKAkWymI1n, input: Wave1_results + Webhook |
+| 18 | Call Content Generator | executeWorkflow | Sub-workflow SD8ssifoO3WmgV6E, input: Wave1_results + Webhook + Historical + resources_context + best_practices_context |
+| 19 | Call Sequence Strategist | executeWorkflow | Sub-workflow 9yaALVGtzyMSW3tm, input: Wave1_results + Webhook |
+| 20 | Wave2_results | merge | Merges 3 Wave 2 agent outputs |
+| 21 | Orchestrator Synthesis | anthropic | Opus 4.5, temp 0.6, maxTokens 10000, executeOnce |
+| 22 | Parse JSON | code | Extracts final_decision, adds metadata |
+| 23 | Save final decision reference | supabase | UPDATE n8n_orchestrator_synthesis |
+| 24 | Save final decision into table | supabase | INSERT final_decision, retryOnFail |
+| 25 | Collect Workflow Run | code | Collects workflow run data for logging |
+| 26 | Save Workflow Run | supabase | INSERT workflow run data |
+| 27 | Evaluate Decision | anthropic | Claude evaluation of decision quality |
+| 28 | Parse evaluator JSON | code | Parses evaluation output |
+| 29 | Send to Zapier for Slack | httpRequest | POST to Zapier webhook |
 
 ---
 
@@ -194,25 +223,35 @@ flowchart TB
         WD3["stats<br/>(total_activities, by_type)"]
     end
 
+    subgraph GSHEET_DATA["📊 Google Sheets Data"]
+        direction LR
+        GS1["resources_context<br/>(resource catalog with match scores)"]
+        GS2["best_practices_context<br/>(sales best practices)"]
+    end
+
     subgraph SDC_OUTPUT["Save data call Output"]
         direction LR
         SDC1["data: Webhook JSON<br/>(contact_info, activities, stats)"]
-        SDC2["max_wave1_iteration: 3"]
-        SDC3["session_id: UUID"]
+        SDC2["resources_context: from GSheet"]
+        SDC3["best_practices_context: from GSheet"]
+        SDC4["max_wave1_iteration: 3"]
+        SDC5["session_id: UUID"]
     end
 
     subgraph WAVE1_INPUT["Wave 1 Agents Input"]
         direction TB
         W1I["All Wave 1 agents receive:<br/>Save data call output<br/>(data.toJsonString())"]
+        W1I2["Opportunity Detector also receives:<br/>resources_context"]
     end
 
     subgraph WAVE2_INPUT["Wave 2 Agents Input"]
         direction TB
         W2I1["Channel Selector & Sequence Strategist:<br/>Wave1_results + Webhook"]
-        W2I2["Content Generator:<br/>Wave1_results + Webhook + Historical"]
+        W2I2["Content Generator:<br/>Wave1_results + Webhook + Historical<br/>+ resources_context + best_practices_context"]
     end
 
     WEBHOOK_DATA --> SDC_OUTPUT
+    GSHEET_DATA --> SDC_OUTPUT
     SDC_OUTPUT --> WAVE1_INPUT
     WAVE1_INPUT --> WAVE2_INPUT
 ```
@@ -226,6 +265,8 @@ flowchart TB
     subgraph SOURCES["🔍 Data Sources for Tools"]
         WH_DATA["$('Webhook').first().json<br/>(original contact data)"]
         SDC_DATA["$('Save data call').item.json.data<br/>(contact data + session_id)"]
+        RES_DATA["$('Merge GSheet Data').first().json.resources_context<br/>(resource catalog)"]
+        BP_DATA["$('Merge GSheet Data').first().json.best_practices_context<br/>(best practices)"]
         WAVE1_RESULTS["$('Wave1_results').all()<br/>(4 Wave 1 agent outputs)"]
         HIST_DATA["$('Get historical recommendations').item.json<br/>(last 10 validated decisions)"]
         WAVE2_RESULTS["$('Wave2_results').all()<br/>(3 Wave 2 agent outputs)"]
@@ -233,14 +274,14 @@ flowchart TB
 
     subgraph WAVE1_TOOLS["Wave 1 Tool Inputs"]
         W1T1["Context Analyzer ← Save data call.data.toJsonString()"]
-        W1T2["Opportunity Detector ← Save data call.data.toJsonString()"]
+        W1T2["Opportunity Detector ← Save data call.data.toJsonString() + resources_context"]
         W1T3["State Analyzer ← Save data call.data.toJsonString()"]
         W1T4["Timing Strategist ← Save data call.data.toJsonString()"]
     end
 
     subgraph WAVE2_TOOLS["Wave 2 Tool Inputs"]
         W2T1["Channel Selector ← Wave1_results + Webhook"]
-        W2T2["Content Generator ← Wave1_results + Webhook + Historical"]
+        W2T2["Content Generator ← Wave1_results + Webhook + Historical + resources_context + best_practices_context"]
         W2T3["Sequence Strategist ← Wave1_results + Webhook"]
     end
 
@@ -250,9 +291,12 @@ flowchart TB
     end
 
     SDC_DATA --> W1T1 & W1T2 & W1T3 & W1T4
+    RES_DATA --> W1T2
     WAVE1_RESULTS --> W2T1 & W2T2 & W2T3
     WH_DATA --> W2T1 & W2T2 & W2T3
     HIST_DATA --> W2T2
+    RES_DATA --> W2T2
+    BP_DATA --> W2T2
     WAVE1_RESULTS --> EVAL_PROMPT
     WH_DATA --> EVAL_PROMPT
     WAVE1_RESULTS --> SYNTH_PROMPT
@@ -260,10 +304,11 @@ flowchart TB
     WH_DATA --> SYNTH_PROMPT
 ```
 
-**KEY INSIGHT**: 
+**KEY INSIGHT**:
 - Wave 1 agents receive data from **Save data call** node (which contains Webhook data + session_id)
+- **Opportunity Detector** also receives **resources_context** for resource matching
 - Wave 2 agents receive data from **Wave1_results + Webhook** (both sources)
-- Content Generator also receives **Historical recommendations**
+- **Content Generator** also receives **Historical recommendations + resources_context + best_practices_context**
 - Synthesis receives **Wave1_results + Wave2_results + Webhook + $today**
 
 ---
@@ -435,6 +480,9 @@ The actual processing continues in the background.
 | Node | ID |
 |------|-----|
 | Webhook | `4eef03bc-1de3-42b8-b6a1-daebb837bd07` |
+| Get resources | (Google Sheets node) |
+| Get practices | (Google Sheets node) |
+| Merge GSheet Data | (Merge node) |
 | Generate UUID | `6c48e234-9a64-46eb-a81f-399cc67b2dc6` |
 | Respond to Webhook with session_id | `84d2dd2f-7d1a-472d-a15b-c6bd43cf6ea4` |
 | Save data call | `8c0d35a2-e7f1-45ec-bbf8-71c10574d494` |
@@ -455,6 +503,10 @@ The actual processing continues in the background.
 | Parse JSON | `2c175788-06f1-459c-b170-9081de183940` |
 | Save final decision reference | `153ddf60-7832-41db-9cfd-48f09c5d1fc2` |
 | Save final decision into table | `0fe7b0e1-1a9b-4d59-ada0-6c852279158c` |
+| Collect Workflow Run | (Code node) |
+| Save Workflow Run | (Supabase INSERT) |
+| Evaluate Decision | (Anthropic Claude) |
+| Parse evaluator JSON | (Code node) |
 | Send to Zapier for Slack | `87f3f678-cb74-40a2-a3c6-87f00bf042e3` |
 
 ---
@@ -477,8 +529,9 @@ The actual processing continues in the background.
 
 | Credential Name | ID | Used By |
 |-----------------|-----|---------|
-| Anthropic account | `WR9IYE0cy2Srym3w` | Orchestrator Wave 1 Evaluation, Orchestrator Synthesis |
-| AI_Sales_supabase (api) | `7YYll9c7CXOe1KjY` | Get historical recommendations, Save final decision nodes |
+| Anthropic account | `WR9IYE0cy2Srym3w` | Orchestrator Wave 1 Evaluation, Orchestrator Synthesis, Evaluate Decision |
+| AI_Sales_supabase (api) | `7YYll9c7CXOe1KjY` | Get historical recommendations, Save final decision nodes, Save Workflow Run |
+| Google Sheets account | (varies) | Get resources, Get practices |
 
 ---
 
@@ -928,6 +981,9 @@ flowchart TB
 10. **Direct Execution**: Agents called via executeWorkflow nodes, not through orchestrator tools
 11. **Immediate Response**: Webhook returns session_id immediately, processing is async
 12. **Execution Time**: ~10 minutes total per contact
+13. **Google Sheets Context**: Resources and best practices are fetched from Google Sheets before processing
+14. **Decision Evaluation**: Post-synthesis, decisions are evaluated for quality by a separate Claude call
+15. **Workflow Run Logging**: Each run is logged to Supabase for analytics
 
 ---
 
