@@ -98,45 +98,66 @@ flowchart TB
     end
 ```
 
-### Decision Flow
+### Decision Flow (V15.5)
 
 ```mermaid
 flowchart TB
     START((Start))
 
-    CHECK_CONTENT{"Content Generated?"}
-    CHECK_BLOCKERS{"Hard Blockers?<br/>• Meeting scheduled<br/>• Explicit wait<br/>• 5+ ghosting"}
-    CHECK_GHOST{"Ghosting Level?"}
-    CHECK_ENGAGE{"Engagement Signal?"}
+    %% V13/V14/V15 Pre-checks
+    CHECK_CHURN{"🚨 Churn<br/>detected?"}
+    CHECK_MULTIOWNER{"👥 Other team<br/>active < 14d?"}
+    CHECK_TOUCHPOINT{"📅 Scheduled<br/>touchpoint?"}
 
-    SEND["send_message"]
-    SEND_LIGHT["send_message<br/>(lighter touch)"]
-    SEND_NOW["send_message<br/>(IMMEDIATE)"]
-    WAIT["wait"]
-    BREAKUP["break_up"]
+    %% STATUT determination
+    CHECK_INBOUND{"Last activity<br/>type?"}
+    CHECK_ENGAGE{"Engagement<br/>signal?<br/>(like, view)"}
+    CHECK_DAYS{"Days since<br/>last outbound?"}
+    CHECK_GHOST{"Ghosting?<br/>(distinct follow-ups<br/>after last inbound)"}
 
-    START --> CHECK_CONTENT
-    CHECK_CONTENT -->|"Yes"| CHECK_BLOCKERS
-    CHECK_CONTENT -->|"No"| CHECK_GHOST
+    %% Actions
+    SEND["✅ send_message"]
+    SEND_LIGHT["✅ send_message<br/>(lighter touch)"]
+    SEND_NOW["⚡ send_message<br/>(IMMEDIATE)"]
+    WAIT["⏸️ wait"]
+    WAIT_CHURN["⏸️ wait<br/>(churn_acknowledged)"]
+    BREAKUP["👋 break_up"]
 
-    CHECK_BLOCKERS -->|"Meeting"| WAIT
-    CHECK_BLOCKERS -->|"Explicit wait"| WAIT
-    CHECK_BLOCKERS -->|"5+ ghost"| BREAKUP
-    CHECK_BLOCKERS -->|"None"| CHECK_GHOST
+    START --> CHECK_CHURN
+    CHECK_CHURN -->|"Yes + responded"| WAIT_CHURN
+    CHECK_CHURN -->|"Yes + NOT responded"| SEND["Send ack"]
+    CHECK_CHURN -->|"No"| CHECK_MULTIOWNER
 
-    CHECK_GHOST -->|"0-2"| CHECK_ENGAGE
-    CHECK_GHOST -->|"3-4"| SEND_LIGHT
-    CHECK_GHOST -->|"5+"| BREAKUP
+    CHECK_MULTIOWNER -->|"Yes"| WAIT
+    CHECK_MULTIOWNER -->|"No"| CHECK_TOUCHPOINT
 
-    CHECK_ENGAGE -->|"Yes"| SEND_NOW
-    CHECK_ENGAGE -->|"No"| SEND
+    CHECK_TOUCHPOINT -->|"Yes"| WAIT
+    CHECK_TOUCHPOINT -->|"No"| CHECK_INBOUND
+
+    CHECK_INBOUND -->|"INBOUND conv"| WAIT
+    CHECK_INBOUND -->|"Engagement signal"| SEND_NOW
+    CHECK_INBOUND -->|"OUTBOUND"| CHECK_DAYS
+
+    CHECK_DAYS -->|"< 3 days"| WAIT
+    CHECK_DAYS -->|"3-14 days"| CHECK_GHOST
+    CHECK_DAYS -->|"> 14 days"| SEND
+
+    CHECK_GHOST -->|"0-2 attempts"| SEND
+    CHECK_GHOST -->|"3-4 attempts"| SEND_LIGHT
+    CHECK_GHOST -->|"5+ attempts"| BREAKUP
 
     style SEND fill:#c8e6c9
     style SEND_LIGHT fill:#dcedc8
     style SEND_NOW fill:#a5d6a7
     style WAIT fill:#fff9c4
+    style WAIT_CHURN fill:#ffcdd2
     style BREAKUP fill:#ffcdd2
 ```
+
+**Key Decision Logic (V15.3+):**
+- **Ghosting** = distinct follow-up attempts on different days (not raw message count)
+- **Conversation burst** = messages same day as inbound (doesn't count as separate attempts)
+- **STATUT system**: ATTENTE → wait, ACTION_POSSIBLE → lighter touch, ACTION_RECOMMANDÉE → send
 
 ## Tech Stack
 

@@ -842,13 +842,15 @@ flowchart TB
 | Contact explicitly said wait | `wait` |
 | 5+ outbounds, zero response | `break_up` or `no_action` |
 
-**Ghosting Thresholds:**
+**Ghosting Thresholds (V15.3 - Semantic Analysis):**
 
-| Consecutive Outbounds | Action |
-|----------------------|--------|
+| Distinct Follow-up Attempts | Action |
+|-----------------------------|--------|
 | 0-2 | Normal follow-up OK |
 | 3-4 | Lighter touch (check-in, coffee) |
 | 5+ | `break_up` or `no_action` |
+
+**Note:** "Distinct follow-up attempts" = messages on DIFFERENT days after last inbound. Messages on the same day as inbound = conversation burst (doesn't count as separate attempts).
 
 **Wait Decision Requirements:**
 ```json
@@ -1059,13 +1061,13 @@ flowchart TB
 
 ---
 
-### The Master Decision Tree (Updated V14)
+### The Master Decision Tree (Updated V15.5)
 
 ```mermaid
 flowchart TB
     START((Start Decision))
 
-    %% V13/V14 Pre-checks
+    %% V13/V14/V15 Pre-checks
     CHECK_CHURN{"🚨 V13: Churn<br/>signal detected?"}
     CHECK_MULTIDEAL{"🔄 V14: Multiple deals?<br/>OPEN deal exists?"}
     CHECK_MULTIOWNER{"👥 V14: Other team member<br/>active < 14 days?"}
@@ -1074,7 +1076,7 @@ flowchart TB
     %% Original gates
     CHECK_CONTENT{"Content Generator<br/>produced message?"}
     CHECK_BLOCKERS{"Any hard blockers?<br/>• Meeting scheduled<br/>• Explicit wait request<br/>• 5+ ghosting"}
-    CHECK_GHOST{"Ghosting level?<br/>(consecutive outbounds<br/>without response)"}
+    CHECK_GHOST{"V15.3: Ghosting level?<br/>(DISTINCT follow-up attempts<br/>on different days)"}
     CHECK_ENGAGE{"Recent engagement<br/>signal?<br/>(like, view, comment)"}
 
     %% Actions
@@ -1136,7 +1138,7 @@ flowchart TB
     style NOACTION fill:#cfd8dc,stroke:#455a64
 ```
 
-### V13/V14 Pre-Decision Safety Checks
+### V13/V14/V15 Pre-Decision Safety Checks
 
 | Check | When Triggered | Action |
 |-------|----------------|--------|
@@ -1145,6 +1147,9 @@ flowchart TB
 | **Multi-Owner (V14)** | Other team member active < 14 days | Wait for coordination |
 | **Scheduled Touchpoint (V14)** | Touchpoint found in emails/notes | Wait until after touchpoint |
 | **Temporal Accuracy (V14)** | Message contains time reference | Validate against actual activity recency |
+| **Semantic Outbound (V15.3)** | Counting ghosting attempts | Use DISTINCT follow-up attempts, not raw message count |
+| **Question Count (V15.1)** | Message has questions | Max 1 question per message |
+| **Meeting Responsibility (V15.2)** | Meeting proposed but not held | Attribute responsibility correctly (us vs them) |
 
 ---
 
