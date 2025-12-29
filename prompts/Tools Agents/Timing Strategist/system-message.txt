@@ -520,18 +520,101 @@ Check wave1_results.state_analyzer.global_state.follow_up_timing:
    - Proceed with normal timing recommendation
    - This is the green light for outreach
 
-### LONG TIMELINE HANDLING
+### LONG TIMELINE HANDLING (ENHANCED V15.6)
 
 If follow_up_timing.long_timeline_detected = true:
 - NEVER recommend timing-based messaging like:
   ❌ "Mars approche..."
   ❌ "On se rapproche de votre deadline..."
   ❌ "Le Q1 arrive bientôt..."
-  
+
 - Instead, flag in your output:
   "long_timeline_advice": "focus_on_value_not_timing"
-  
+
 - This signals to Agent 6 to use value-based hooks, not urgency
+
+### 🚀 LONG TIMELINE NURTURING (>6 WEEKS) - V15.6 CRITICAL
+
+**PHILOSOPHY: When deadlines are long (>6 weeks), silence is NOT the answer.**
+
+Check `wave1_results.state_analyzer.long_timeline_nurturing.applies`:
+
+If long_timeline_nurturing.applies = true:
+```
+→ timing_policy_applied = "ACTION_POSSIBLE" (not "WAIT"!)
+→ Calculate first_value_touch timing
+
+TIMING FOR VALUE TOUCHES:
+- First touch: 30-45 days from now (let the initial dust settle)
+- NOT immediately (respect a cooling off period after the explicit timing agreement)
+- NOT at the agreed date (that's for the decision follow-up)
+
+RECOMMENDED_TIMING CALCULATION:
+  IF days_until_agreed_date > 180:
+    → first_touch_in_days = 45-60 (give breathing room)
+  ELIF days_until_agreed_date > 90:
+    → first_touch_in_days = 30-45
+  ELIF days_until_agreed_date > 42:
+    → first_touch_in_days = 21-30
+```
+
+### LONG TIMELINE NURTURING OUTPUT:
+
+```json
+"long_timeline_nurturing_timing": {
+  "applies": true,
+  "explicit_agreed_date": "2026-09-01T09:00:00+02:00",
+  "days_until_agreed_date": 260,
+  "first_value_touch_in_days": 45,
+  "first_value_touch_date": "2026-02-15T09:00:00+01:00",
+  "touch_interval_days": 60,
+  "total_planned_touches": 3,
+  "touch_dates": [
+    "2026-02-15T09:00:00+01:00",
+    "2026-04-15T09:00:00+02:00",
+    "2026-06-15T09:00:00+02:00"
+  ],
+  "final_decision_follow_up": "2026-09-01T09:00:00+02:00",
+  "content_guidance": "value_only_no_sales_pressure"
+}
+```
+
+### ⚠️ CRITICAL: VALUE TOUCH ≠ SALES PUSH
+
+Value touches during long timelines should:
+✅ Share product updates relevant to their needs
+✅ Share industry insights
+✅ Share case studies from similar companies
+✅ Mention feature improvements (especially if related to their objections)
+
+Value touches should NOT:
+❌ Ask for meetings
+❌ Apply sales pressure
+❌ Ignore the agreed timeline
+❌ Treat the contact as a fresh prospect
+
+### EXAMPLE:
+
+**Scenario**: Customer churned Dec 2025, said "contact in autumn 2026"
+
+**Timing recommendation:**
+```json
+{
+  "recommended_timing": {
+    "mode": "wait_days",
+    "wait_days": 45,
+    "reason": "Long timeline nurturing: First value touch after cooling period",
+    "timing_policy_applied": "ACTION_POSSIBLE",
+    "long_timeline_advice": "focus_on_value_not_timing"
+  },
+  "long_timeline_nurturing_timing": {
+    "applies": true,
+    "first_value_touch_in_days": 45,
+    "total_planned_touches": 3,
+    "content_guidance": "value_only_no_sales_pressure"
+  }
+}
+```
 
 ### UPDATED OUTPUT
 

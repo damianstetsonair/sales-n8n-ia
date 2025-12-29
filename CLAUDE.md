@@ -946,6 +946,128 @@ Synthesis must include `base_score_reasoning`:
 
 ---
 
+## 🚀 V15.6 Long Timeline Nurturing (December 2025)
+
+V15.6 addresses a critical commercial strategy issue: when explicit timing agreements are long (>6 weeks), the system was incorrectly doing nothing while waiting.
+
+### The Problem
+
+**Feedback received:**
+> "When the door is open but in lot of month, the goal is to wait one month or two and start give him some news about airsaas etc. When the deadlines are long, 'several months' for example > 6 weeks: we can't afford to do nothing while we wait, we have to provide quality news."
+
+**Example of the Bug:**
+```
+Scenario: Customer churned, said "contact me in autumn 2026" (9 months away)
+
+OLD (WRONG) behavior:
+  - action = "wait"
+  - reevaluate_at = "2026-09-01"
+  - overall_strategy = "Any outreach before September 2026 would be disrespectful"
+  - Result: 9 months of silence = relationship death
+```
+
+### The Fix: Long Timeline Nurturing
+
+When explicit_timing_agreement exists AND timeline > 6 weeks away:
+- Create a VALUE NURTURE sequence with periodic touches
+- First touch after 30-45 day cooling period
+- Continue value touches at 45-60 day intervals
+- Final touch at agreed date can request meeting
+
+### New Output Structure
+
+**State Analyzer now outputs:**
+```json
+"long_timeline_nurturing": {
+  "applies": true,
+  "reason": "Agreed timeline > 6 weeks - intermediate value touches needed",
+  "total_wait_days": 260,
+  "agreed_date": "2026-09-01T09:00:00+02:00",
+  "recommended_intermediate_touches": 3,
+  "touch_interval_days": 60,
+  "first_touch_recommended_at": "2026-02-15T09:00:00+01:00"
+}
+```
+
+### Value Touch Cadence
+
+| days_until_agreed | Touches | Interval |
+|-------------------|---------|----------|
+| > 180 days (6+ months) | 3-4 | 45-60 days |
+| 90-180 days (3-6 months) | 2-3 | 30-45 days |
+| 42-90 days (6-12 weeks) | 1-2 | 21-30 days |
+| < 42 days (< 6 weeks) | 0 | Wait (OK for short periods) |
+
+### Value Touch Content Guidelines
+
+Value touches should:
+- ✅ Share product updates relevant to their objection
+- ✅ Share industry insights
+- ✅ Share case studies from similar companies
+- ✅ Be soft and non-pushy
+
+Value touches should NOT:
+- ❌ Request meetings (until final touch)
+- ❌ Apply sales pressure
+- ❌ Mention the churn explicitly
+- ❌ Ignore the agreed timeline for decision
+
+### Example Correct Output
+
+```json
+{
+  "action": "send_message",
+  "action_type": "value_nurture",
+  "execute_at": "2026-02-15T09:00:00+01:00",
+  "sequence_plan": [
+    {
+      "step": 1,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-02-15T09:00:00+01:00",
+      "action_type": "value_share",
+      "content_theme": "product_update",
+      "sales_pressure": "none"
+    },
+    {
+      "step": 2,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-04-15T09:00:00+02:00",
+      "action_type": "value_share",
+      "content_theme": "case_study",
+      "sales_pressure": "none"
+    },
+    {
+      "step": 3,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-06-15T09:00:00+02:00",
+      "action_type": "value_share",
+      "content_theme": "industry_insight",
+      "sales_pressure": "none"
+    },
+    {
+      "step": 4,
+      "trigger": "reevaluation_date",
+      "planned_date": "2026-09-01T09:00:00+02:00",
+      "action_type": "check_in",
+      "content_theme": "direct_ask",
+      "sales_pressure": "soft"
+    }
+  ],
+  "overall_strategy": "Churned customer with 9-month timeline. Silence would kill the relationship. Plan: 3 value touches (product updates, case studies, insights) over 6 months, then decision follow-up in September 2026."
+}
+```
+
+### Agents Updated
+
+| Agent | Changes |
+|-------|---------|
+| State Analyzer | Added `long_timeline_nurturing` detection and output |
+| Timing Strategist | Added `long_timeline_nurturing_timing` with touch dates |
+| Sequence Strategist | Added `long_timeline_nurture` sequence type |
+| Orchestrator Synthesis | Added PRIORITY 0.55 long timeline override logic |
+
+---
+
 ## 🚀 V15.5 Meeting & Pricing Accuracy Improvements (December 2025)
 
 V15.5 addresses accuracy issues identified through decision evaluation testing, focusing on meeting characterization and pricing distinction.

@@ -583,6 +583,237 @@ STEP 0.5.4: Determine action based on response status
 ---
 
 ====================
+🚀 PRIORITY 0.55: LONG TIMELINE NURTURING OVERRIDE (V15.6 - CRITICAL)
+====================
+
+**EXECUTE THIS AFTER CHURN CHECK, BEFORE PROCESSING WAVE 2**
+
+### THE PROBLEM THIS SOLVES:
+
+When a contact says "contact me in autumn 2026" (9 months away), the OLD behavior was:
+- action = "wait"
+- reevaluate_at = "2026-09-01"
+- Do NOTHING for 9 months
+
+This is WRONG. 9 months of silence = relationship death.
+
+### THE NEW BEHAVIOR:
+
+When explicit_timing_agreement exists AND timeline > 6 weeks away:
+- Create a VALUE NURTURE sequence with periodic touches
+- First touch after 30-45 day cooling period
+- Continue value touches until agreed date
+- Final touch at agreed date can request meeting
+
+### LONG TIMELINE NURTURING EXTRACTION:
+
+```
+STEP 0.55.1: Check for long timeline nurturing trigger
+  long_timeline_nurturing = wave1_results.state_analyzer.long_timeline_nurturing
+
+  IF long_timeline_nurturing.applies = true:
+    → DO NOT set action = "wait" with no intermediate touches
+    → DO create value_nurture sequence from Sequence Strategist
+    → action = "send_message" (value touch, not sales)
+    → execute_at = long_timeline_nurturing.first_touch_recommended_at
+
+STEP 0.55.2: Override wait behavior for long timelines
+  IF churn_detected = true AND future_timing.exists = true:
+    days_until_agreed = (future_timing.parsed_date - reference_date).days
+
+    IF days_until_agreed > 42 (6 weeks):
+      → action = "send_message" (OVERRIDE!)
+      → action_type = "value_nurture"
+      → execute_at = reference_date + 45 days (first value touch)
+      → sequence_plan = long timeline nurture sequence
+      → reevaluate_at = future_timing.parsed_date (final decision follow-up)
+```
+
+### LONG TIMELINE SEQUENCE INTEGRATION:
+
+When long_timeline_nurturing applies, the sequence_plan MUST include:
+
+```json
+"sequence_plan": [
+  {
+    "step": 1,
+    "trigger": "scheduled_date",
+    "channel": "email",
+    "planned_date": "2026-02-15T09:00:00+01:00",
+    "action_type": "value_share",
+    "content_theme": "product_update",
+    "sales_pressure": "none",
+    "condition": "First value touch - share product improvement related to their objection"
+  },
+  {
+    "step": 2,
+    "trigger": "scheduled_date",
+    "channel": "email",
+    "planned_date": "2026-04-15T09:00:00+02:00",
+    "action_type": "value_share",
+    "content_theme": "case_study",
+    "sales_pressure": "none",
+    "condition": "Second value touch - share relevant case study"
+  },
+  {
+    "step": 3,
+    "trigger": "scheduled_date",
+    "channel": "linkedin",
+    "planned_date": "2026-06-15T09:00:00+02:00",
+    "action_type": "value_share",
+    "content_theme": "industry_insight",
+    "sales_pressure": "none",
+    "condition": "Third value touch via different channel"
+  },
+  {
+    "step": 4,
+    "trigger": "reevaluation_date",
+    "channel": "email",
+    "planned_date": "2026-09-01T09:00:00+02:00",
+    "action_type": "check_in",
+    "content_theme": "direct_ask",
+    "sales_pressure": "soft",
+    "condition": "Final touch at agreed date - NOW can propose meeting"
+  }
+]
+```
+
+### ⚠️ CRITICAL: LONG TIMELINE ≠ NO ACTION
+
+| days_until_agreed | Old (Wrong) Behavior | New (Correct) Behavior |
+|-------------------|---------------------|------------------------|
+| > 180 days (6+ months) | wait until agreed date | 3-4 value touches over period |
+| 90-180 days (3-6 months) | wait until agreed date | 2-3 value touches over period |
+| 42-90 days (6-12 weeks) | wait until agreed date | 1-2 value touches over period |
+| < 42 days (< 6 weeks) | wait until agreed date | wait (this is OK for short periods) |
+
+### OUTPUT FOR LONG TIMELINE NURTURING:
+
+```json
+"long_timeline_nurturing_decision": {
+  "applies": true,
+  "explicit_timing_agreement": {
+    "agreed_date": "2026-09-01T09:00:00+02:00",
+    "days_until": 260
+  },
+  "action_override": {
+    "old_action_would_be": "wait",
+    "new_action": "send_message",
+    "action_type": "value_nurture",
+    "override_reason": "Long timeline (260 days) requires periodic value touches to maintain relationship"
+  },
+  "nurture_sequence": {
+    "total_touches": 4,
+    "touch_interval_days": 60,
+    "first_touch_at": "2026-02-15T09:00:00+01:00",
+    "final_touch_at": "2026-09-01T09:00:00+02:00"
+  },
+  "content_guidance": {
+    "value_touches_should": [
+      "Share product updates relevant to their objection",
+      "Share industry insights",
+      "Share case studies from similar companies"
+    ],
+    "value_touches_should_not": [
+      "Request meetings",
+      "Apply sales pressure",
+      "Ignore the agreed timeline for decision"
+    ]
+  }
+}
+```
+
+### CHURN + LONG TIMELINE SPECIAL HANDLING:
+
+When contact CHURNED but left door open for future:
+
+```
+IF churn_detected = true
+   AND already_responded = true
+   AND future_timing.exists = true
+   AND days_until_agreed > 42:
+
+  → This is the PERFECT case for long timeline nurturing
+  → We acknowledged the churn
+  → They gave us a future date
+  → We MUST stay relevant until then
+
+  action = "send_message" (not now, but scheduled)
+  execute_at = reference_date + 45 days (first value touch)
+  sequence_plan = 3-4 value touches until agreed date
+  final_reevaluate_at = agreed_date
+
+  Content for first touch should:
+  - NOT mention the churn
+  - NOT be sales-focused
+  - Focus on value (product update, insight)
+  - Be soft and non-pushy
+```
+
+### EXAMPLE TRANSFORMATION:
+
+**OLD (WRONG) output for churned customer with autumn 2026 timeline:**
+```json
+{
+  "action": "wait",
+  "wait_type": "explicit_request",
+  "reevaluate_at": "2026-09-01T09:00:00+02:00",
+  "sequence_plan": [{
+    "step": 1,
+    "trigger": "reevaluation_date",
+    "planned_date": "2026-09-01T09:00:00+02:00"
+  }],
+  "overall_strategy": "Any outreach before September 2026 would be disrespectful"
+}
+```
+
+**NEW (CORRECT) output:**
+```json
+{
+  "action": "send_message",
+  "action_type": "value_nurture",
+  "execute_at": "2026-02-15T09:00:00+01:00",
+  "sequence_plan": [
+    {
+      "step": 1,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-02-15T09:00:00+01:00",
+      "action_type": "value_share",
+      "content_theme": "product_update"
+    },
+    {
+      "step": 2,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-04-15T09:00:00+02:00",
+      "action_type": "value_share",
+      "content_theme": "case_study"
+    },
+    {
+      "step": 3,
+      "trigger": "scheduled_date",
+      "planned_date": "2026-06-15T09:00:00+02:00",
+      "action_type": "value_share",
+      "content_theme": "industry_insight"
+    },
+    {
+      "step": 4,
+      "trigger": "reevaluation_date",
+      "planned_date": "2026-09-01T09:00:00+02:00",
+      "action_type": "check_in",
+      "content_theme": "direct_ask"
+    }
+  ],
+  "long_timeline_nurturing_decision": {
+    "applies": true,
+    "override_reason": "9 months of silence = relationship death. Periodic value touches keep us relevant."
+  },
+  "overall_strategy": "Churned customer with 9-month timeline. Silence would kill the relationship. Plan: 3 value touches (product updates, case studies, insights) over 6 months, then decision follow-up in September 2026."
+}
+```
+
+---
+
+====================
 🚨 PRIORITY 0.6: UNCLOSED LOOPS & MULTI-OWNER SAFETY CHECKS (V15 - FROM AE-Agent)
 ====================
 

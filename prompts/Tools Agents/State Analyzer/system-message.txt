@@ -2579,9 +2579,105 @@ You MUST detect when contact OR owner agreed on a specific recontact date.
 
 ### IMPACT ON TIMING_VERDICT:
 If explicit_timing_agreement.exists = true:
-- AND current_date < agreed_date → timing_verdict = "WAIT"
 - AND current_date >= agreed_date → timing_verdict = "ACTION_RECOMMENDED"
+- AND current_date < agreed_date:
+  - Calculate days_until_agreed_date = (agreed_date - current_date) in days
+  - **IF days_until_agreed_date > 42 (6 weeks)** → See LONG TIMELINE NURTURING below
+  - ELSE → timing_verdict = "WAIT"
 - scenario = "explicit_timing_agreement"
+
+### 🚀 LONG TIMELINE NURTURING (>6 WEEKS) - V15.6 CRITICAL
+
+**PHILOSOPHY: When deadlines are long (>6 weeks), we CANNOT afford to do nothing while we wait.**
+
+When an explicit_timing_agreement exists BUT the agreed date is MORE than 6 weeks away:
+- We MUST plan intermediate value touches to stay top-of-mind
+- Complete silence until the agreed date is a MISSED OPPORTUNITY
+- The goal is to provide quality news/updates periodically, NOT to ignore the timeline
+
+```
+LONG_TIMELINE_NURTURING_RULES:
+
+IF explicit_timing_agreement.exists = true:
+  days_until = (agreed_date - reference_date).days
+
+  IF days_until > 42 (6 weeks):
+    → long_timeline_nurturing.applies = true
+    → long_timeline_nurturing.total_wait_days = days_until
+    → long_timeline_nurturing.recommended_intermediate_touches = calculate_touches(days_until)
+    → timing_verdict = "ACTION_POSSIBLE" (NOT "WAIT"!)
+    → action_type_recommended = "value_nurture"
+
+    # Calculate recommended touches
+    IF days_until > 180 (6+ months):
+      → recommended_touches = 3-4 value touches over the period
+      → touch_interval_days = 45-60
+    ELIF days_until > 90 (3-6 months):
+      → recommended_touches = 2-3 value touches
+      → touch_interval_days = 30-45
+    ELIF days_until > 42 (6-12 weeks):
+      → recommended_touches = 1-2 value touches
+      → touch_interval_days = 21-30
+
+  ELSE (days_until <= 42):
+    → long_timeline_nurturing.applies = false
+    → timing_verdict = "WAIT" (respect the short-term timing)
+```
+
+### LONG TIMELINE NURTURING OUTPUT (MANDATORY when applies):
+
+```json
+"long_timeline_nurturing": {
+  "applies": true,
+  "reason": "Agreed timeline > 6 weeks - intermediate value touches needed",
+  "total_wait_days": 260,
+  "agreed_date": "2026-09-01T09:00:00+02:00",
+  "recommended_intermediate_touches": 3,
+  "touch_interval_days": 60,
+  "first_touch_recommended_at": "2026-02-01T09:00:00+01:00",
+  "touch_strategy": "value_nurture",
+  "content_themes": [
+    "Product updates relevant to their stated needs",
+    "Industry insights related to their context",
+    "Case studies from similar companies",
+    "Feature announcements addressing their objections"
+  ],
+  "forbidden_content": [
+    "Sales pressure",
+    "Meeting requests (until closer to agreed date)",
+    "Ignoring the agreed timeline"
+  ],
+  "rationale": "Customer said 'automne 2026' (9 months away). Silence for 9 months = relationship death. Periodic value touches keep us relevant without violating the timing agreement."
+}
+```
+
+### ⚠️ CRITICAL: LONG TIMELINE ≠ NO ACTION
+
+**WRONG thinking:**
+- "They said autumn 2026, so we wait until September 2026"
+- "Any outreach before September would be disrespectful"
+
+**CORRECT thinking:**
+- "They said autumn 2026 for the DECISION, not for all communication"
+- "We can provide value (news, updates, insights) in the meantime"
+- "1-2 months of silence is OK, but 6+ months = relationship death"
+- "When we reach out in autumn 2026, we should NOT be strangers"
+
+### EXAMPLE APPLICATION:
+
+**Scenario**: Customer churned, said "contact me in autumn 2026" (9 months away)
+
+**OLD (WRONG) behavior:**
+- timing_verdict = "WAIT"
+- reevaluate_at = "2026-09-01"
+- action = "no_action" for 9 months
+
+**NEW (CORRECT) behavior:**
+- timing_verdict = "ACTION_POSSIBLE"
+- long_timeline_nurturing.applies = true
+- action_type = "value_nurture"
+- sequence_plan includes 3 value touches before September 2026
+- Each touch provides value (product update, insight) WITHOUT sales pressure
 
 ====================
 FOLLOW-UP TIMING RULES (SLOTS + DEADLINES)

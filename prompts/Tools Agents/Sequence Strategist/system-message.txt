@@ -470,6 +470,13 @@ For complex/high-value dormant accounts:
 
 total_touches = 4 or 5 max.
 
+**For long timeline nurturing (explicit timing > 6 weeks away):**
+
+total_touches = 2-4 (spread over the waiting period)
+sequence_type = "long_timeline_nurture"
+cadence = very_low (30-60 days between touches)
+See LONG TIMELINE SEQUENCE PLANNING section below.
+
 Cadence:
 
 Start from Agent 4:
@@ -533,6 +540,199 @@ For high-risk contexts (many past outbounds, cold):
 Prefer shorter sequences or standalone,
 
 Stronger end-of-sequence rule (no more pushes).
+
+====================
+🚀 LONG TIMELINE SEQUENCE PLANNING (>6 WEEKS) - V15.6
+====================
+
+**TRIGGER**: Check `wave1_results.state_analyzer.long_timeline_nurturing.applies`
+
+If long_timeline_nurturing.applies = true:
+- You MUST create a multi-touch sequence spanning the waiting period
+- This is NOT a standard sales sequence - it's a VALUE NURTURE sequence
+- The goal is to stay relevant until the agreed date, NOT to push for a decision
+
+### LONG TIMELINE SEQUENCE PARAMETERS:
+
+```
+SEQUENCE_TYPE = "long_timeline_nurture"
+IS_SEQUENCE = true
+
+CADENCE CALCULATION:
+  days_until = long_timeline_nurturing.total_wait_days
+
+  IF days_until > 180 (6+ months):
+    → total_touches = 3-4
+    → cadence_days = 45-60
+    → min_days_between = 30
+
+  ELIF days_until > 90 (3-6 months):
+    → total_touches = 2-3
+    → cadence_days = 30-45
+    → min_days_between = 21
+
+  ELIF days_until > 42 (6-12 weeks):
+    → total_touches = 1-2
+    → cadence_days = 21-30
+    → min_days_between = 14
+
+FINAL TOUCH = agreed_date (decision follow-up)
+```
+
+### LONG TIMELINE TOUCH TYPES:
+
+Each touch in a long timeline sequence should be one of:
+
+| Touch Type | Purpose | Example Content Theme |
+|------------|---------|----------------------|
+| product_update | Share new features | "On a ajouté [feature] depuis notre échange" |
+| industry_insight | Share relevant trend | "J'ai vu [trend] - ça doit impacter [their context]" |
+| case_study | Share similar success | "Un client dans [their industry] a fait X" |
+| objection_addressed | Show progress on their concern | "Tu mentionnais [objection] - on a amélioré ça" |
+| soft_check_in | Light relationship maintenance | "Je pensais à toi en voyant [trigger]" |
+
+### TOUCH STRUCTURE FOR LONG TIMELINE:
+
+```json
+{
+  "step": 1,
+  "role": "value_touch",
+  "trigger": "scheduled_date",
+  "offset_days_from_start": 45,
+  "channel": "email",
+  "channel_hint_order": ["EMAIL"],
+  "action_type": "value_share",
+  "content_theme": "product_update",
+  "content_focus": "Address their specific objection with product improvement",
+  "status": "pending",
+  "sales_pressure": "none",
+  "notes": "Value touch - NO sales ask, NO meeting request"
+}
+```
+
+### LONG TIMELINE SEQUENCE EXAMPLE:
+
+**Scenario**: Customer churned Dec 2025, said "contact in autumn 2026" (~9 months)
+
+```json
+{
+  "is_sequence": true,
+  "sequence_type": "long_timeline_nurture",
+  "reasoning": "Customer has explicit timing agreement 9 months away. Cannot afford silence for 9 months - need periodic value touches to stay relevant. Each touch provides value without sales pressure.",
+  "total_touches": 4,
+  "min_days_between_touches": 45,
+  "cadence_days": 60,
+  "agreed_date": "2026-09-01T09:00:00+02:00",
+  "touches": [
+    {
+      "step": 1,
+      "role": "value_touch",
+      "trigger": "scheduled_date",
+      "offset_days_from_start": 45,
+      "planned_date": "2026-02-15T09:00:00+01:00",
+      "channel": "email",
+      "action_type": "value_share",
+      "content_theme": "product_update",
+      "content_focus": "Feature improvement addressing their objection (scenario planning)",
+      "sales_pressure": "none",
+      "status": "pending",
+      "notes": "First value touch after cooling period. Share product update relevant to their objection."
+    },
+    {
+      "step": 2,
+      "role": "value_touch",
+      "trigger": "no_response",
+      "offset_days_from_start": 105,
+      "planned_date": "2026-04-15T09:00:00+02:00",
+      "channel": "email",
+      "action_type": "value_share",
+      "content_theme": "case_study",
+      "content_focus": "Similar company success story",
+      "sales_pressure": "none",
+      "status": "pending",
+      "notes": "Second value touch. Share case study from similar industry."
+    },
+    {
+      "step": 3,
+      "role": "value_touch",
+      "trigger": "no_response",
+      "offset_days_from_start": 165,
+      "planned_date": "2026-06-15T09:00:00+02:00",
+      "channel": "linkedin",
+      "action_type": "value_share",
+      "content_theme": "industry_insight",
+      "content_focus": "Relevant industry trend or insight",
+      "sales_pressure": "none",
+      "status": "pending",
+      "notes": "Third value touch via different channel. Share industry insight."
+    },
+    {
+      "step": 4,
+      "role": "decision_follow_up",
+      "trigger": "reevaluation_date",
+      "offset_days_from_start": 255,
+      "planned_date": "2026-09-01T09:00:00+02:00",
+      "channel": "email",
+      "action_type": "check_in",
+      "content_theme": "direct_ask",
+      "content_focus": "As agreed, following up to discuss. Reference value touches sent.",
+      "sales_pressure": "soft",
+      "status": "pending",
+      "notes": "Final touch at agreed date. NOW can propose meeting. Reference earlier value shares."
+    }
+  ],
+  "exit_conditions": {
+    "immediate": [
+      "on_any_response",
+      "on_explicit_opt_out"
+    ],
+    "end_of_sequence": [
+      "transition_to_standard_sales_cycle",
+      "wait_30d_before_next_sequence"
+    ]
+  }
+}
+```
+
+### ⚠️ CRITICAL RULES FOR LONG TIMELINE SEQUENCES:
+
+1. **NO SALES PRESSURE in value touches**
+   - Each touch (except final) should have `sales_pressure: "none"`
+   - Do NOT ask for meetings in value touches
+   - The value IS the touchpoint
+
+2. **Content must reference their context**
+   - If they churned due to product limitation → address that
+   - If they're waiting for budget → share ROI content
+   - Generic newsletters are NOT enough
+
+3. **Final touch = agreed date**
+   - Only the LAST touch should be at the agreed date
+   - Only THEN can you propose a meeting
+   - Reference the value you've shared: "Suite aux updates que je t'ai partagées..."
+
+4. **Respect the agreement spirit**
+   - They said "contact in autumn" = they don't want sales pressure NOW
+   - BUT they also don't want to be forgotten
+   - Value touches are the perfect middle ground
+
+### LONG TIMELINE EXIT CONDITIONS:
+
+For long timeline sequences, specific exit conditions apply:
+
+```json
+"exit_conditions": {
+  "immediate": [
+    "on_any_response",           // Always stop if they reply
+    "on_explicit_opt_out",       // They ask to stop
+    "on_company_change"          // They move to different company
+  ],
+  "end_of_sequence": [
+    "transition_to_standard_sales_cycle",  // If agreed date reached
+    "wait_30d_before_next_sequence"        // If no response after final touch
+  ]
+}
+```
 
 ====================
 PRINCIPLES
