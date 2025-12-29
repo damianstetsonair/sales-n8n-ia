@@ -5,20 +5,26 @@
 This document is the **exact photograph** of the n8n workflow for AI agents to understand the system architecture without parsing the full JSON.
 
 **Last verified**: 2025-12-22 against `n8n-workflow.json` (V14 features added)
-**Estimated execution time**: ~7 minutes per contact
+**Estimated execution time**: ~10 minutes per contact
 
 ---
 
 ## Executive Summary
 
 ```
-INPUT (Webhook POST)
-    → Validation + Constants
-    → WAVE 1 (4 Analysis Agents)
-    → Historical Data Fetch
-    → WAVE 2 (3 Action Agents + Quality Check)
-    → Retry Loop (max 2 iterations)
-    → WAVE 3 (Synthesis)
+INPUT (Webhook POST /parallel-kam-agent)
+    → Generate UUID + Respond to Webhook
+    → Save data call
+    → WAVE 1 (4 Analysis Agents called in parallel)
+    → Merge Wave1_results
+    → Orchestrator Wave 1 Evaluation
+    → Parse evaluation JSON
+    → Retry Switch (continue or retry)
+    → IF continue: Get historical recommendations + WAVE 2 (3 Action Agents)
+    → IF retry: Loop back to Generate UUID (max 2 iterations)
+    → Merge Wave2_results
+    → WAVE 3 (Orchestrator Synthesis)
+    → Parse JSON
     → Save to Supabase
     → Notify via Slack/Zapier
 ```
@@ -30,62 +36,44 @@ INPUT (Webhook POST)
 ```mermaid
 flowchart TB
     subgraph TRIGGER["🎯 TRIGGER"]
-        WH[("Webhook<br/>POST /multi-agent-orchestrator<br/>responseMode: responseNode")]
+        WH[("Webhook<br/>POST /parallel-kam-agent<br/>responseMode: responseNode")]
     end
 
-    subgraph INIT["⚙️ INITIALIZATION (Parallel from Webhook)"]
-        IV["Input Validator<br/>Code node<br/>Validates: contact_info, activities, stats<br/>Output: validation, conversation_analysis"]
-        CONST["Constants<br/>Set node<br/>session_id, iteration_count=1<br/>MAX_RETRY_ITERATIONS=2"]
-        RESP["Respond to Webhook<br/>Returns session_id immediately<br/>'~7 minutes, please wait...'"]
-        M1["Merge<br/>Input 0: Input Validator<br/>Input 1: Respond to Webhook"]
+    subgraph INIT["⚙️ INITIALIZATION"]
+        UUID["Generate UUID<br/>Crypto node<br/>Generates session_id"]
+        RESP["Respond to Webhook<br/>Returns session_id immediately<br/>'~10 minutes, please wait...'"]
+        SDC["Save data call<br/>Set node<br/>Prepares data structure<br/>with session_id"]
     end
 
-    subgraph WAVE1["🔵 WAVE 1: ANALYSIS"]
+    subgraph WAVE1["🔵 WAVE 1: ANALYSIS (Parallel Execution)"]
         direction TB
-        OD["Orchestrator Distribution<br/>Claude Sonnet 4 | temp: 0.2<br/>maxTokens: 10000<br/>retryOnFail: true<br/>executeOnce: true"]
+        T1["Call Context Analyzer<br/>executeWorkflow<br/>workflow: AvvHbsi6znhLenHt<br/>input: Save data call output"]
+        T2["Call Opportunity Detector<br/>executeWorkflow<br/>workflow: x8FhUOAPaob2UAsD<br/>input: Save data call output"]
+        T3["Call State Analyzer<br/>executeWorkflow<br/>workflow: p5j7uHQGG4MXtzDQ<br/>input: Save data call output"]
+        T4["Call Timing Strategist<br/>executeWorkflow<br/>workflow: SA9CbSZ6gG4VbLr3<br/>input: Save data call output"]
+        M1["Wave1_results<br/>Merge node<br/>4 inputs from Wave 1 agents"]
+    end
 
-        subgraph TOOLS1["Tool Agents (ai_tool connections)"]
-            T1["Context Analyzer<br/>workflow: AvvHbsi6znhLenHt<br/>input: $json.toJsonString()"]
-            T2["Opportunity Detector<br/>workflow: x8FhUOAPaob2UAsD<br/>input: $json.toJsonString()"]
-            T3["State Analyzer<br/>workflow: p5j7uHQGG4MXtzDQ<br/>input: $json.toJsonString()"]
-            T4["Timing Strategist<br/>workflow: SA9CbSZ6gG4VbLr3<br/>input: $json.toJsonString()"]
-        end
-
-        MEM1[("Memory2<br/>n8n_orchestrator_distribution<br/>contextWindow: 2000")]
-        MODEL1["Sonnet 4 Model<br/>claude-sonnet-4-20250514"]
-
-        MODEL1 -->|"ai_languageModel"| OD
-        MEM1 -->|"ai_memory"| OD
-        T1 & T2 & T3 & T4 -->|"ai_tool"| OD
+    subgraph EVAL["🔍 WAVE 1 EVALUATION"]
+        OWE["Orchestrator Wave 1 Evaluation<br/>Claude Opus 4.5 | temp: 0.1<br/>maxTokens: 15000<br/>executeOnce: true<br/>Validates Wave 1 outputs"]
+        PEJ["Parse evaluation JSON<br/>Code node<br/>Extracts evaluation_decision.action"]
+        SW{{"Retry Wave 1?<br/>Switch node<br/>Output 0: continue<br/>Output 1: retry wave"}}
     end
 
     subgraph HIST["📚 HISTORICAL DATA"]
-        GH["Get historial recomendations<br/>Supabase: final_decision<br/>limit: 10<br/>filter: validated only<br/>executeOnce: true<br/>alwaysOutputData: true"]
-        M2["Merge2<br/>Input 0: Distribution output<br/>Input 1: Historical data"]
+        GH["Get historical recommendations<br/>Supabase: final_decision<br/>limit: 10<br/>filter: validated only<br/>executeOnce: true<br/>alwaysOutputData: true"]
     end
 
-    subgraph WAVE2["🟠 WAVE 2: ACTION + QUALITY CONTROL"]
+    subgraph WAVE2["🟠 WAVE 2: ACTION (Parallel Execution)"]
         direction TB
-        OE["Orchestrator Evaluation<br/>Claude Opus 4.5 | temp: 0.4<br/>maxTokens: 10000<br/>executeOnce: true"]
-
-        subgraph TOOLS2["Tool Agents (ai_tool connections)"]
-            T5["Channel Selector<br/>workflow: IranprNKAkWymI1n<br/>input: Webhook.body"]
-            T6["Content Generator<br/>workflow: SD8ssifoO3WmgV6E<br/>input: Webhook.body + Historical"]
-            T7["Sequence Strategist<br/>workflow: 9yaALVGtzyMSW3tm<br/>input: Webhook.body"]
-        end
-
-        MEM2[("Memory1<br/>n8n_orchestrator_evaluation<br/>contextWindow: 2000")]
-        MODEL2["Opus 4.5 Model2<br/>claude-opus-4-5-20251101"]
-
-        MODEL2 -->|"ai_languageModel"| OE
-        MEM2 -->|"ai_memory"| OE
-        T5 & T6 & T7 -->|"ai_tool"| OE
+        T5["Call channel selector<br/>executeWorkflow<br/>workflow: IranprNKAkWymI1n<br/>input: Wave1_results + Webhook"]
+        T6["Call Content Generator<br/>executeWorkflow<br/>workflow: SD8ssifoO3WmgV6E<br/>input: Wave1_results + Webhook + Historical<br/>executeOnce: true"]
+        T7["Call Sequence Strategist<br/>executeWorkflow<br/>workflow: 9yaALVGtzyMSW3tm<br/>input: Wave1_results + Webhook"]
+        M2["Wave2_results<br/>Merge node<br/>3 inputs from Wave 2 agents"]
     end
 
     subgraph RETRY["🔄 RETRY LOGIC"]
-        PED["Parse Evaluation Decision<br/>Code node<br/>Extracts: action (continue|retry)<br/>Checks: iteration < max"]
-        SW{{"Retry? (Switch)<br/>Output 0: retry<br/>Output 1: continue"}}
-        PRC["Prepare Retry Context<br/>Code node<br/>iteration++<br/>Adds retry_instructions"]
+        LOOP["Loop back to Generate UUID<br/>(max 2 iterations)"]
     end
 
     subgraph WAVE3["🟢 WAVE 3: SYNTHESIS"]
@@ -105,23 +93,37 @@ flowchart TB
     end
 
     %% EXACT CONNECTIONS from n8n-workflow.json
-    WH -->|"main[0]"| IV
-    WH -->|"main[0]"| CONST
-    CONST --> RESP
-    IV -->|"main → index 0"| M1
-    RESP -->|"main → index 1"| M1
-    M1 --> OD
+    WH -->|"main[0]"| UUID
+    UUID --> RESP
+    UUID --> SDC
+    RESP --> SDC
 
-    OD -->|"main[0]"| GH
-    OD -->|"main[0]"| M2
-    GH -->|"main → index 1"| M2
-    M2 --> OE
+    SDC -->|"main[0]"| T1
+    SDC -->|"main[0]"| T2
+    SDC -->|"main[0]"| T3
+    SDC -->|"main[0]"| T4
 
-    OE --> PED
-    PED --> SW
-    SW -->|"main[0]: retry"| PRC
-    PRC --> OD
-    SW -->|"main[1]: continue"| OS
+    T1 -->|"main[0] → index 0"| M1
+    T2 -->|"main[0] → index 1"| M1
+    T3 -->|"main[0] → index 2"| M1
+    T4 -->|"main[0] → index 3"| M1
+
+    M1 --> OWE
+    OWE --> PEJ
+    PEJ --> SW
+
+    SW -->|"main[0]: continue"| GH
+    SW -->|"main[0]: continue"| T5
+    SW -->|"main[0]: continue"| T7
+    SW -->|"main[1]: retry"| UUID
+
+    GH --> T6
+
+    T5 -->|"main[0] → index 1"| M2
+    T6 -->|"main[0] → index 0"| M2
+    T7 -->|"main[0] → index 2"| M2
+
+    M2 --> OS
 
     OS --> PJ
     PJ -->|"main[0]"| SV2
@@ -132,60 +134,52 @@ flowchart TB
     classDef trigger fill:#e1f5fe,stroke:#01579b
     classDef init fill:#f5f5f5,stroke:#616161
     classDef wave1 fill:#e3f2fd,stroke:#1565c0
+    classDef eval fill:#fff9c4,stroke:#f9a825
     classDef wave2 fill:#fff3e0,stroke:#e65100
     classDef wave3 fill:#e8f5e9,stroke:#2e7d32
     classDef retry fill:#fce4ec,stroke:#c2185b
     classDef output fill:#f3e5f5,stroke:#7b1fa2
-    classDef memory fill:#fffde7,stroke:#f9a825,stroke-dasharray: 5 5
-    classDef model fill:#e0f7fa,stroke:#00838f
+    classDef hist fill:#e0f2f1,stroke:#00695c
 
     class WH trigger
-    class IV,CONST,RESP,M1 init
-    class OD,T1,T2,T3,T4 wave1
-    class OE,T5,T6,T7 wave2
+    class UUID,RESP,SDC init
+    class T1,T2,T3,T4,M1 wave1
+    class OWE,PEJ eval
+    class T5,T6,T7,M2 wave2
     class OS wave3
-    class SW,PRC,PED retry
+    class SW,LOOP retry
     class PJ,SV1,SV2,ZAP output
-    class MEM1,MEM2,MEM3 memory
-    class MODEL1,MODEL2,MODEL3 model
+    class GH hist
 ```
 
 ---
 
-## Complete Node List (26 nodes total)
+## Complete Node List (18 nodes total)
 
 | # | Node Name | Type | Key Parameters |
 |---|-----------|------|----------------|
-| 1 | Webhook | webhook | POST /multi-agent-orchestrator, responseMode: responseNode |
-| 2 | Input Validator | code | Validates contact_info, activities, stats |
-| 3 | Constants | set | session_id, iteration_count=1, MAX_RETRY=2 |
-| 4 | Respond to Webhook | respondToWebhook | Returns session_id, "~7 min wait" |
-| 5 | Merge | merge | Combines Input Validator + Constants |
-| 6 | Orchestrator Distribution | agent | Sonnet 4, temp 0.2, retryOnFail |
-| 7 | Context Analyzer | toolWorkflow | Sub-workflow AvvHbsi6znhLenHt |
-| 8 | Opportunity Detector | toolWorkflow | Sub-workflow x8FhUOAPaob2UAsD |
-| 9 | State Analyzer | toolWorkflow | Sub-workflow p5j7uHQGG4MXtzDQ |
-| 10 | Timing Strategist | toolWorkflow | Sub-workflow SA9CbSZ6gG4VbLr3 |
-| 11 | Sonnet 4 Model | lmChatAnthropic | claude-sonnet-4-20250514, temp 0.2 |
-| 12 | AI_sales_agents Memory2 | memoryPostgresChat | Table: n8n_orchestrator_distribution |
-| 13 | Get historial recomendations | supabase | getAll, limit 10, validated only |
-| 14 | Merge2 | merge | Distribution + Historical |
-| 15 | Orchestrator Evaluation | agent | Opus 4.5, temp 0.4, executeOnce |
-| 16 | Channel Selector | toolWorkflow | Sub-workflow IranprNKAkWymI1n |
-| 17 | Content Generator | toolWorkflow | Sub-workflow SD8ssifoO3WmgV6E |
-| 18 | Sequence Strategist | toolWorkflow | Sub-workflow 9yaALVGtzyMSW3tm |
-| 19 | Opus 4.5 Model2 | lmChatAnthropic | claude-opus-4-5-20251101, temp 0.4 |
-| 20 | AI_sales_agents Memory1 | memoryPostgresChat | Table: n8n_orchestrator_evaluation |
-| 21 | Parse Evaluation Decision | code | Extracts action, checks iteration |
-| 22 | Retry? | switch | Output 0: retry, Output 1: continue |
-| 23 | Prepare Retry Context | code | iteration++, retry_instructions |
-| 24 | Orchestrator Synthesis | agent | Opus 4.5, temp 0.6, executeOnce |
-| 25 | Opus Model | lmChatAnthropic | claude-opus-4-5-20251101, temp 0.6 |
-| 26 | AI_sales_agents Memory | memoryPostgresChat | Table: n8n_orchestrator_synthesis |
-| 27 | Parse JSON | code | Extracts final_decision, adds metadata |
-| 28 | Save final decision reference | supabase | UPDATE n8n_orchestrator_synthesis |
-| 29 | Save final decision into table | supabase | INSERT final_decision, retryOnFail |
-| 30 | Send to Zapier for Slack | httpRequest | POST to Zapier webhook |
+| 1 | Webhook | webhook | POST /parallel-kam-agent, responseMode: responseNode |
+| 2 | Generate UUID | crypto | Generates session_id |
+| 3 | Respond to Webhook with session_id | respondToWebhook | Returns session_id, "~10 min wait" |
+| 4 | Save data call | set | Prepares data structure with session_id |
+| 5 | Call Context Analyzer | executeWorkflow | Sub-workflow AvvHbsi6znhLenHt, input: Save data call |
+| 6 | Call Opportunity Detector | executeWorkflow | Sub-workflow x8FhUOAPaob2UAsD, input: Save data call |
+| 7 | Call State Analyzer | executeWorkflow | Sub-workflow p5j7uHQGG4MXtzDQ, input: Save data call |
+| 8 | Call Timing Strategist | executeWorkflow | Sub-workflow SA9CbSZ6gG4VbLr3, input: Save data call |
+| 9 | Wave1_results | merge | Merges 4 Wave 1 agent outputs |
+| 10 | Orchestrator Wave 1 Evaluation | anthropic | Opus 4.5, temp 0.1, maxTokens 15000, validates Wave 1 |
+| 11 | Parse evaluation JSON | code | Extracts evaluation_decision.action |
+| 12 | Retry Wave 1? | switch | Output 0: continue, Output 1: retry wave |
+| 13 | Get historical recommendations | supabase | getAll, limit 10, validated only, executeOnce |
+| 14 | Call channel selector | executeWorkflow | Sub-workflow IranprNKAkWymI1n, input: Wave1_results + Webhook |
+| 15 | Call Content Generator | executeWorkflow | Sub-workflow SD8ssifoO3WmgV6E, input: Wave1_results + Webhook + Historical |
+| 16 | Call Sequence Strategist | executeWorkflow | Sub-workflow 9yaALVGtzyMSW3tm, input: Wave1_results + Webhook |
+| 17 | Wave2_results | merge | Merges 3 Wave 2 agent outputs |
+| 18 | Orchestrator Synthesis | anthropic | Opus 4.5, temp 0.6, maxTokens 10000, executeOnce |
+| 19 | Parse JSON | code | Extracts final_decision, adds metadata |
+| 20 | Save final decision reference | supabase | UPDATE n8n_orchestrator_synthesis |
+| 21 | Save final decision into table | supabase | INSERT final_decision, retryOnFail |
+| 22 | Send to Zapier for Slack | httpRequest | POST to Zapier webhook |
 
 ---
 
@@ -195,36 +189,32 @@ flowchart TB
 flowchart TB
     subgraph WEBHOOK_DATA["📥 Webhook Input Structure"]
         direction LR
-        WD1["body.contact_info<br/>(name, job, company, linkedin_url, owner)"]
-        WD2["body.activities[]<br/>(activity_type, direction, recorded_on, metadata)"]
-        WD3["body.stats<br/>(total_activities, by_type)"]
+        WD1["contact_info<br/>(name, job, company, linkedin_url, owner)"]
+        WD2["activities[]<br/>(activity_type, direction, recorded_on, metadata)"]
+        WD3["stats<br/>(total_activities, by_type)"]
     end
 
-    subgraph IV_OUTPUT["Input Validator Output"]
+    subgraph SDC_OUTPUT["Save data call Output"]
         direction LR
-        IVO1["contact_info (passthrough)"]
-        IVO2["activities (passthrough)"]
-        IVO3["stats (passthrough)"]
-        IVO4["validation<br/>(is_valid, errors, warnings, available_channels)"]
-        IVO5["conversation_analysis<br/>(lastInbound, lastOutbound, daysSinceLastContact)"]
+        SDC1["data: Webhook JSON<br/>(contact_info, activities, stats)"]
+        SDC2["max_wave1_iteration: 3"]
+        SDC3["session_id: UUID"]
     end
 
-    subgraph CONST_OUTPUT["Constants Output"]
-        direction LR
-        CO1["SEMANTIC_CONSTANTS<br/>(thresholds, max_retry=2)"]
-        CO2["session_id (random)"]
-        CO3["contact_hubspot_id"]
-        CO4["iteration_count = 1"]
-    end
-
-    subgraph MERGED["Merge Output (to Distribution)"]
+    subgraph WAVE1_INPUT["Wave 1 Agents Input"]
         direction TB
-        MO["All Input Validator fields +<br/>All Constants fields"]
+        W1I["All Wave 1 agents receive:<br/>Save data call output<br/>(data.toJsonString())"]
     end
 
-    WEBHOOK_DATA --> IV_OUTPUT
-    IV_OUTPUT --> MERGED
-    CONST_OUTPUT --> MERGED
+    subgraph WAVE2_INPUT["Wave 2 Agents Input"]
+        direction TB
+        W2I1["Channel Selector & Sequence Strategist:<br/>Wave1_results + Webhook"]
+        W2I2["Content Generator:<br/>Wave1_results + Webhook + Historical"]
+    end
+
+    WEBHOOK_DATA --> SDC_OUTPUT
+    SDC_OUTPUT --> WAVE1_INPUT
+    WAVE1_INPUT --> WAVE2_INPUT
 ```
 
 ---
@@ -234,46 +224,47 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph SOURCES["🔍 Data Sources for Tools"]
-        WH_BODY["$('Webhook').item.json.body<br/>(original contact data)"]
-        MERGED_JSON["$json (from Merge)<br/>(validated + enriched)"]
-        HIST_DATA["$('Get historial recomendations').all()<br/>(last 10 validated decisions)"]
-        DIST_OUTPUT["$('Orchestrator Distribution').first().json.output<br/>(Wave 1 results)"]
-        EVAL_OUTPUT["$('Orchestrator Evaluation').first().json.output<br/>(Wave 2 results)"]
-        IV_DATA["$('Input Validator').first().json<br/>(validated contact data)"]
+        WH_DATA["$('Webhook').first().json<br/>(original contact data)"]
+        SDC_DATA["$('Save data call').item.json.data<br/>(contact data + session_id)"]
+        WAVE1_RESULTS["$('Wave1_results').all()<br/>(4 Wave 1 agent outputs)"]
+        HIST_DATA["$('Get historical recommendations').item.json<br/>(last 10 validated decisions)"]
+        WAVE2_RESULTS["$('Wave2_results').all()<br/>(3 Wave 2 agent outputs)"]
     end
 
     subgraph WAVE1_TOOLS["Wave 1 Tool Inputs"]
-        W1T1["Context Analyzer ← $json.toJsonString()"]
-        W1T2["Opportunity Detector ← $json.toJsonString()"]
-        W1T3["State Analyzer ← $json.toJsonString()"]
-        W1T4["Timing Strategist ← $json.toJsonString()"]
+        W1T1["Context Analyzer ← Save data call.data.toJsonString()"]
+        W1T2["Opportunity Detector ← Save data call.data.toJsonString()"]
+        W1T3["State Analyzer ← Save data call.data.toJsonString()"]
+        W1T4["Timing Strategist ← Save data call.data.toJsonString()"]
     end
 
     subgraph WAVE2_TOOLS["Wave 2 Tool Inputs"]
-        W2T1["Channel Selector ← Webhook.body.toJsonString()"]
-        W2T2["Content Generator ← Webhook.body + Historical"]
-        W2T3["Sequence Strategist ← Webhook.body.toJsonString()"]
+        W2T1["Channel Selector ← Wave1_results + Webhook"]
+        W2T2["Content Generator ← Wave1_results + Webhook + Historical"]
+        W2T3["Sequence Strategist ← Wave1_results + Webhook"]
     end
 
     subgraph ORCHESTRATOR_INPUTS["Orchestrator User Prompts"]
-        DIST_PROMPT["Distribution:<br/>$json.toJsonString() + $now.toISO()"]
-        EVAL_PROMPT["Evaluation:<br/>Distribution.output + Historical + iteration"]
-        SYNTH_PROMPT["Synthesis:<br/>Distribution.output + Evaluation.output<br/>+ InputValidator.contact_info + $today"]
+        EVAL_PROMPT["Wave 1 Evaluation:<br/>Wave1_results + Webhook<br/>(validates accuracy)"]
+        SYNTH_PROMPT["Synthesis:<br/>Wave1_results + Wave2_results<br/>+ Webhook + $today"]
     end
 
-    MERGED_JSON --> W1T1 & W1T2 & W1T3 & W1T4
-    WH_BODY --> W2T1 & W2T3
-    WH_BODY --> W2T2
+    SDC_DATA --> W1T1 & W1T2 & W1T3 & W1T4
+    WAVE1_RESULTS --> W2T1 & W2T2 & W2T3
+    WH_DATA --> W2T1 & W2T2 & W2T3
     HIST_DATA --> W2T2
-    MERGED_JSON --> DIST_PROMPT
-    DIST_OUTPUT --> EVAL_PROMPT
-    HIST_DATA --> EVAL_PROMPT
-    DIST_OUTPUT --> SYNTH_PROMPT
-    EVAL_OUTPUT --> SYNTH_PROMPT
-    IV_DATA --> SYNTH_PROMPT
+    WAVE1_RESULTS --> EVAL_PROMPT
+    WH_DATA --> EVAL_PROMPT
+    WAVE1_RESULTS --> SYNTH_PROMPT
+    WAVE2_RESULTS --> SYNTH_PROMPT
+    WH_DATA --> SYNTH_PROMPT
 ```
 
-**KEY INSIGHT**: Wave 2 tools receive data from **Webhook.body directly**, NOT from Wave 1 output. Only Content Generator also receives historical recommendations.
+**KEY INSIGHT**: 
+- Wave 1 agents receive data from **Save data call** node (which contains Webhook data + session_id)
+- Wave 2 agents receive data from **Wave1_results + Webhook** (both sources)
+- Content Generator also receives **Historical recommendations**
+- Synthesis receives **Wave1_results + Wave2_results + Webhook + $today**
 
 ---
 
@@ -298,28 +289,32 @@ This ensures only **human-validated** recommendations are used for learning.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Distribution: iteration=1
-    Distribution --> Historical
-    Historical --> Evaluation
-    Evaluation --> ParseDecision
+    [*] --> GenerateUUID: Start
+    GenerateUUID --> SaveDataCall
+    SaveDataCall --> Wave1Agents: Call 4 agents in parallel
+    Wave1Agents --> Wave1Results: Merge outputs
+    Wave1Results --> Wave1Evaluation: Validate accuracy
+    Wave1Evaluation --> ParseEvalJSON
 
-    ParseDecision --> CheckConditions
+    ParseEvalJSON --> CheckConditions
 
     state CheckConditions {
         [*] --> CheckAction
         CheckAction --> IsRetry: action="retry"
         CheckAction --> IsContinue: action="continue"
         IsRetry --> CheckIteration
-        CheckIteration --> CanRetry: iteration < max(2)
-        CheckIteration --> ForceContinue: iteration >= max(2)
+        CheckIteration --> CanRetry: iteration < max(3)
+        CheckIteration --> ForceContinue: iteration >= max(3)
     }
 
-    CanRetry --> PrepareRetry: Output 0
-    ForceContinue --> Synthesis: Output 1
-    IsContinue --> Synthesis: Output 1
+    CanRetry --> LoopBack: Output 1 (retry wave)
+    ForceContinue --> Wave2: Output 0 (continue)
+    IsContinue --> Wave2: Output 0 (continue)
 
-    PrepareRetry --> Distribution: iteration++
+    LoopBack --> GenerateUUID: Loop back
 
+    Wave2 --> Wave2Results: Merge outputs
+    Wave2Results --> Synthesis
     Synthesis --> ParseJSON
     ParseJSON --> SaveDB
     SaveDB --> Slack
@@ -329,31 +324,31 @@ stateDiagram-v2
 ### Parse Evaluation Decision Logic (Code)
 
 ```javascript
-// Key logic from Parse Evaluation Decision node
-const currentIteration = constants.iteration_count || 1;
-const maxIterations = constants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2;
+// Key logic from Parse evaluation JSON node
+const output = $input.first().json;
+let text = output.content?.[0]?.text || output.text || output.output || '';
 
-// Force continue if max reached
-if (currentIteration >= maxIterations) {
-  action = 'continue';
-}
+// Clean markdown and extract JSON
+text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+const match = text.match(/\{[\s\S]*\}/);
 
-return {
-  decision: {
-    action: action,  // "continue" or "retry"
-    current_iteration: currentIteration,
-    max_iterations: maxIterations,
-    should_retry: action === 'retry' && currentIteration < maxIterations
+const parsed = JSON.parse(match[0]);
+
+return [{
+  json: {
+    ...parsed,
+    should_continue: parsed.evaluation_decision?.action === 'continue',
+    should_retry: parsed.evaluation_decision?.action === 'retry'
   }
-};
+}];
 ```
 
 ### Switch Node Conditions
 
 | Output | Condition | Destination |
 |--------|-----------|-------------|
-| Output 0 (retry) | `$json.decision.action === "retry"` | Prepare Retry Context |
-| Output 1 (continue) | `$json.decision.action === "continue"` | Orchestrator Synthesis |
+| Output 0 (continue) | `$json.evaluation_decision.action === "continue"` | Get historical recommendations + Wave 2 agents |
+| Output 1 (retry wave) | `$json.evaluation_decision.action !== "continue"` | Generate UUID (loop back) |
 
 ---
 
@@ -362,33 +357,23 @@ return {
 ```mermaid
 graph TB
     subgraph MODELS["🤖 AI Models"]
-        S4["Sonnet 4 Model<br/>claude-sonnet-4-20250514<br/>ID: 7c153553-5dd5-47cc-9e53-a45bfbd4995f"]
-        O45_E["Opus 4.5 Model2<br/>claude-opus-4-5-20251101<br/>ID: 483c92aa-0d8c-489b-a62b-071e0428595c"]
-        O45_S["Opus Model<br/>claude-opus-4-5-20251101<br/>ID: 4fc8a0a6-a901-4e20-8a8e-5a19da203d3f"]
-    end
-
-    subgraph CONFIG["Configuration"]
-        C1["temp: 0.2<br/>maxTokens: 10000"]
-        C2["temp: 0.4<br/>maxTokens: 10000"]
-        C3["temp: 0.6<br/>maxTokens: 10000"]
+        O45_EVAL["Opus 4.5 Evaluation<br/>claude-opus-4-5-20251101<br/>temp: 0.1, maxTokens: 15000"]
+        O45_SYNTH["Opus 4.5 Synthesis<br/>claude-opus-4-5-20251101<br/>temp: 0.6, maxTokens: 10000"]
     end
 
     subgraph USAGE["Connected To"]
-        U1["Orchestrator Distribution"]
-        U2["Orchestrator Evaluation"]
-        U3["Orchestrator Synthesis"]
+        U1["Orchestrator Wave 1 Evaluation<br/>(validates Wave 1 outputs)"]
+        U2["Orchestrator Synthesis<br/>(final decision maker)"]
     end
 
-    S4 --- C1 --- U1
-    O45_E --- C2 --- U2
-    O45_S --- C3 --- U3
+    O45_EVAL --- U1
+    O45_SYNTH --- U2
 ```
 
 | Orchestrator | Model | Temperature | Purpose |
 |--------------|-------|-------------|---------|
-| Distribution | Sonnet 4 | 0.2 | Deterministic analysis (low creativity) |
-| Evaluation | Opus 4.5 | 0.4 | Balanced quality control |
-| Synthesis | Opus 4.5 | 0.6 | Creative final decision |
+| Wave 1 Evaluation | Opus 4.5 | 0.1 | Low temperature for accurate validation |
+| Synthesis | Opus 4.5 | 0.6 | Higher temperature for creative synthesis |
 
 ---
 
@@ -396,11 +381,7 @@ graph TB
 
 ### Memory Tables (PostgreSQL via Supabase)
 
-| Memory Node | Table Name | Connected To | Context Window |
-|-------------|------------|--------------|----------------|
-| AI_sales_agents Memory2 | n8n_orchestrator_distribution | Distribution | 2000 |
-| AI_sales_agents Memory1 | n8n_orchestrator_evaluation | Evaluation | 2000 |
-| AI_sales_agents Memory | n8n_orchestrator_synthesis | Synthesis | 2000 |
+**Note**: The current workflow does not use memory nodes. Each orchestrator node is stateless.
 
 ### Final Output Operations
 
@@ -417,7 +398,8 @@ The webhook responds **immediately** with:
 
 ```json
 {
-  "message": "Workflow was started! This process takes about 7 minutes, please wait...",
+  "message": "Workflow was started! This process takes about 10 minutes, please wait... :)",
+  "started_at": "{{ $now.toString() }}",
   "session_id": "{{ generated_session_id }}"
 }
 ```
@@ -430,11 +412,11 @@ The actual processing continues in the background.
 
 | Node | Flag | Behavior |
 |------|------|----------|
-| Orchestrator Distribution | `retryOnFail: true`, `waitBetweenTries: 500` | Auto-retries on failure |
-| Orchestrator Distribution | `executeOnce: true` | Runs only once per execution |
-| Orchestrator Evaluation | `executeOnce: true` | Runs only once per execution |
+| Orchestrator Wave 1 Evaluation | `executeOnce: true` | Runs only once per execution |
 | Orchestrator Synthesis | `executeOnce: true` | Runs only once per execution |
-| Get historial recomendations | `executeOnce: true`, `alwaysOutputData: true` | Single fetch, always outputs (even if empty) |
+| Get historical recommendations | `executeOnce: true`, `alwaysOutputData: true` | Single fetch, always outputs (even if empty) |
+| Call Content Generator | `executeOnce: true` | Runs only once per execution |
+| Respond to Webhook with session_id | `executeOnce: true` | Responds immediately |
 | Save final decision into table | `retryOnFail: true` | Auto-retries on DB failure |
 
 ---
@@ -443,10 +425,8 @@ The actual processing continues in the background.
 
 | Connection Type | Description | Example |
 |-----------------|-------------|---------|
-| `main` | Standard data flow | Webhook → Input Validator |
-| `ai_tool` | Tool available to AI Agent | Context Analyzer → Distribution |
-| `ai_languageModel` | LLM model connection | Sonnet 4 → Distribution |
-| `ai_memory` | Memory/context provider | Memory2 → Distribution |
+| `main` | Standard data flow | Webhook → Generate UUID |
+| `executeWorkflow` | Calls sub-workflow | Save data call → Call Context Analyzer |
 
 ---
 
@@ -454,22 +434,28 @@ The actual processing continues in the background.
 
 | Node | ID |
 |------|-----|
-| Webhook | `4f63b4b2-c098-4bd4-b13d-540c4ad6d114` |
-| Input Validator | `7db1c27c-97d9-4de4-893b-7c43181a553c` |
-| Constants | `ca3532db-9621-455e-bcda-b9c3f1b68e3c` |
-| Merge | `39fe72a3-c4e6-419c-a384-7a5cf7f4428f` |
-| Orchestrator Distribution | `1649a99e-b34e-4aec-9e99-c692ad0187b6` |
-| Get historial recomendations | `00252f08-7852-4eac-a500-923ace280c19` |
-| Merge2 | `613a7cef-5871-46f8-970a-fb8979dec526` |
-| Orchestrator Evaluation | `2a5eeb73-89a6-426a-b3f1-003ce866d759` |
-| Parse Evaluation Decision | `cfd69364-0cfb-4934-8082-1fe866f191b3` |
-| Retry? | `5e12d69c-e0be-4d7a-a8be-1d686a203527` |
-| Prepare Retry Context | `2534228c-45a0-464a-b7ff-54518f542338` |
-| Orchestrator Synthesis | `f8956e24-e9ea-482b-93c7-9a155f191362` |
-| Parse JSON | `26131a77-d569-4528-b24b-af2d06e0566e` |
-| Save final decision reference | `a3a98a26-b1c1-4653-90ad-6cce96e026ac` |
-| Save final decision into table | `7c5f9684-de40-42ee-b88a-2a423d595c07` |
-| Send to Zapier for Slack | `d581ef05-2fea-423f-b582-e8bac6685c30` |
+| Webhook | `4eef03bc-1de3-42b8-b6a1-daebb837bd07` |
+| Generate UUID | `6c48e234-9a64-46eb-a81f-399cc67b2dc6` |
+| Respond to Webhook with session_id | `84d2dd2f-7d1a-472d-a15b-c6bd43cf6ea4` |
+| Save data call | `8c0d35a2-e7f1-45ec-bbf8-71c10574d494` |
+| Call Context Analyzer | `4223c4bd-73aa-4724-a4c4-475252d70550` |
+| Call Opportunity Detector | `276267f9-154b-4a76-b227-6153446a5f98` |
+| Call State Analyzer | `552d0e70-2423-4e8c-859f-9181af3634f5` |
+| Call Timing Strategist | `fd0ebd8e-b1ad-43b1-baac-75466c938edd` |
+| Wave1_results | `54d4db74-fc58-48db-921e-7925111804d7` |
+| Orchestrator Wave 1 Evaluation | `1cca17f2-dcce-4935-94b7-69c86a7420d5` |
+| Parse evaluation JSON | `486c940f-5497-4815-af0b-c97539af39a8` |
+| Retry Wave 1? | `7751c623-8541-4cc9-a13f-5133cbf12cee` |
+| Get historical recommendations | `e831ae81-c8e9-46bd-87ce-d47331688eb6` |
+| Call channel selector | `d1b479df-4570-45ca-86c9-bee3c206c5d1` |
+| Call Content Generator | `085370f2-b750-43a8-83d5-5929850fbb4c` |
+| Call Sequence Strategist | `8cc2b3c6-e967-4f78-8b82-bd563e1f5fb1` |
+| Wave2_results | `2f648805-0f70-4ac1-a073-361be4bd26af` |
+| Orchestrator Synthesis | `342052ae-2794-46de-8021-d828356b2e9b` |
+| Parse JSON | `2c175788-06f1-459c-b170-9081de183940` |
+| Save final decision reference | `153ddf60-7832-41db-9cfd-48f09c5d1fc2` |
+| Save final decision into table | `0fe7b0e1-1a9b-4d59-ada0-6c852279158c` |
+| Send to Zapier for Slack | `87f3f678-cb74-40a2-a3c6-87f00bf042e3` |
 
 ---
 
@@ -491,9 +477,8 @@ The actual processing continues in the background.
 
 | Credential Name | ID | Used By |
 |-----------------|-----|---------|
-| Anthropic account | `WR9IYE0cy2Srym3w` | All 3 LLM models |
-| AI_sales_agents Supabase (postgres) | `9t3LCP46SMBNPxAk` | All 3 Memory nodes |
-| AI_Sales_supabase (api) | `7YYll9c7CXOe1KjY` | Historical query + Save nodes |
+| Anthropic account | `WR9IYE0cy2Srym3w` | Orchestrator Wave 1 Evaluation, Orchestrator Synthesis |
+| AI_Sales_supabase (api) | `7YYll9c7CXOe1KjY` | Get historical recommendations, Save final decision nodes |
 
 ---
 
@@ -544,214 +529,202 @@ else conversationState = 'active';
 
 ---
 
-### 2. Wave 1: Distribution Orchestrator Decision
+### 2. Wave 1: Direct Agent Execution
 
-**Role**: Call 4 analysis tools and consolidate results.
+**Role**: Call 4 analysis agents in parallel via executeWorkflow nodes.
 
 ```mermaid
 flowchart TB
-    OD["Orchestrator Distribution<br/>Claude Sonnet 4 @ temp 0.2"]
+    SDC["Save data call<br/>Prepares data structure"]
 
-    subgraph TOOLS["Tools Called (MANDATORY)"]
-        T1["1. Context Analyzer"]
-        T2["2. Opportunity Detector"]
-        T3["3. State Analyzer"]
-        T4["4. Timing Strategist"]
+    subgraph TOOLS["Agents Called in Parallel"]
+        T1["1. Call Context Analyzer<br/>executeWorkflow"]
+        T2["2. Call Opportunity Detector<br/>executeWorkflow"]
+        T3["3. Call State Analyzer<br/>executeWorkflow"]
+        T4["4. Call Timing Strategist<br/>executeWorkflow"]
     end
 
-    subgraph DECISION["Decision: Which tools to call?"]
-        D1["ALL 4 tools MUST be called"]
-        D2["Order: Context → Opportunity → State → Timing"]
-        D3["Each receives $json.toJsonString()"]
+    subgraph MERGE["Merge Results"]
+        M1["Wave1_results<br/>Merge node<br/>4 inputs"]
     end
 
-    OD --> DECISION --> TOOLS
-    TOOLS --> OUT["Consolidated wave1_results"]
+    SDC --> T1 & T2 & T3 & T4
+    T1 & T2 & T3 & T4 --> M1
 ```
 
-**System Message Mandate:**
-> "You MUST call these 4 tools IN THIS EXACT ORDER... DO NOT generate a response without calling the tools first."
+**Execution:**
+- All 4 agents are called **in parallel** from Save data call node
+- Each agent receives: `$('Save data call').item.json.data.toJsonString()`
+- Results are merged into Wave1_results node
+- No orchestrator node - direct execution
 
 **Output Structure:**
-```json
-{
-  "agent_id": "distribution_orchestrator",
-  "phase": "wave1",
-  "wave1_results": {
-    "context_relationship_analyzer": { /* tool response */ },
-    "opportunity_detector": { /* tool response */ },
-    "state_analyzer": { /* tool response */ },
-    "timing_strategist": { /* tool response */ }
-  }
-}
-```
+Each agent returns its own JSON output, which is merged into Wave1_results array.
 
 ---
 
-### 3. Wave 2: Evaluation Orchestrator Decision
+### 3. Wave 1 Evaluation Decision
 
-**Role**: Execute 3 action tools + Quality Control + Retry Decision.
+**Role**: Validate Wave 1 agent outputs for accuracy and decide: continue to Wave 2 or retry Wave 1.
 
 ```mermaid
 flowchart TB
-    subgraph PHASE1["Phase 1: Execute Tools"]
-        T5["Channel Selector<br/>← Webhook.body"]
-        T6["Content Generator<br/>← Webhook.body + Historical"]
-        T7["Sequence Strategist<br/>← Webhook.body"]
+    W1R["Wave1_results<br/>(4 agent outputs)"]
+    OWE["Orchestrator Wave 1 Evaluation<br/>Opus 4.5 @ temp 0.1"]
+    PEJ["Parse evaluation JSON"]
+    SW{{"Retry Wave 1?<br/>Switch"}}
+
+    subgraph EVAL["Evaluation Checks"]
+        EC1["Data Reception OK?"]
+        EC2["Factual Accuracy?"]
+        EC3["No Hallucinations?"]
+        EC4["Cross-Agent Coherence?"]
+        EC5["Completeness?"]
     end
 
-    subgraph PHASE2["Phase 2: Quality Check"]
-        QC1["wave1_coherence ≥ 0.6?"]
-        QC2["wave2_coherence ≥ 0.6?"]
-        QC3["cross_wave_alignment ≥ 0.6?"]
-        QC4["Critical contradictions?"]
+    subgraph DECISION["Decision"]
+        CONTINUE["action = 'continue'<br/>→ Wave 2"]
+        RETRY["action = 'retry'<br/>→ Loop back"]
     end
 
-    subgraph PHASE3["Phase 3: Decision"]
-        CONTINUE["action = 'continue'"]
-        RETRY["action = 'retry'<br/>+ retry_instructions"]
-    end
-
-    PHASE1 --> PHASE2
-    QC1 -->|"Yes"| CONTINUE
-    QC2 -->|"Yes"| CONTINUE
-    QC3 -->|"Yes"| CONTINUE
-    QC4 -->|"No contradictions"| CONTINUE
-    QC1 -->|"No"| RETRY
-    QC4 -->|"Contradictions found"| RETRY
+    W1R --> OWE
+    OWE --> EC1 & EC2 & EC3 & EC4 & EC5
+    EC1 & EC2 & EC3 & EC4 & EC5 --> PEJ
+    PEJ --> SW
+    SW -->|"Output 0: continue"| CONTINUE
+    SW -->|"Output 1: retry"| RETRY
 ```
 
 **Decision Rules (from system message):**
 
 | Condition | Action |
 |-----------|--------|
-| All scores ≥ 0.6 | `continue` |
-| No critical contradictions | `continue` |
-| iteration ≥ max_iterations | `continue` (MANDATORY) |
-| Critical contradictions detected | `retry` |
-| Key data was missed | `retry` |
-| Scores < 0.6 AND iteration < max | `retry` |
+| All facts verified, no hallucinations | `continue` |
+| Agent(s) received empty/null data | `retry` |
+| Hallucinated information detected | `retry` |
+| Key data from original was missed | `retry` |
 
 **Output Structure:**
 ```json
 {
   "evaluation_decision": {
     "action": "continue|retry",
-    "reasoning": "Brief explanation",
+    "reasoning": "Brief explanation with specific references",
     "retry_instructions": {
-      "context_relationship_analyzer": "Specific instruction or null",
-      "opportunity_detector": null,
-      "state_analyzer": "Specific instruction or null",
-      "timing_strategist": null
+      "context_relationship_analyzer": "Instruction or null",
+      "opportunity_detector": "Instruction or null",
+      "state_analyzer": "Instruction or null",
+      "timing_strategist": "Instruction or null"
     }
   },
+  "fact_check": {
+    "verified": ["List of key facts"],
+    "errors": ["Any factual errors"],
+    "missed": ["Important data not captured"]
+  },
   "quality_scores": {
-    "wave1_coherence": 0.8,
-    "wave2_coherence": 0.8,
-    "cross_wave_alignment": 0.8
+    "context_analyzer": 0.85,
+    "opportunity_detector": 0.80,
+    "state_analyzer": 0.90,
+    "timing_strategist": 0.85,
+    "factual_accuracy": 0.90
   }
 }
 ```
 
----
+### 4. Wave 2: Direct Agent Execution
 
-### 4. Parse Evaluation Decision (Code Node)
-
-**Role**: Extract action from Evaluation output and enforce iteration limits.
+**Role**: Execute 3 action agents in parallel after Wave 1 validation passes.
 
 ```mermaid
 flowchart TB
-    INPUT["Evaluation Output"]
+    SW["Retry Wave 1?<br/>(Output 0: continue)"]
+    
+    subgraph PARALLEL["Wave 2 Agents (Parallel)"]
+        T5["Call channel selector<br/>executeWorkflow"]
+        T6["Call Content Generator<br/>executeWorkflow"]
+        T7["Call Sequence Strategist<br/>executeWorkflow"]
+    end
+
+    GH["Get historical recommendations<br/>(feeds Content Generator)"]
+    M2["Wave2_results<br/>Merge node<br/>3 inputs"]
+
+    SW --> T5 & T7 & GH
+    GH --> T6
+    T5 & T6 & T7 --> M2
+```
+
+**Input Sources:**
+- Channel Selector & Sequence Strategist: `Wave1_results + Webhook`
+- Content Generator: `Wave1_results + Webhook + Historical recommendations`
+
+---
+
+### 5. Parse Evaluation Decision (Code Node)
+
+**Role**: Extract action from Wave 1 Evaluation output.
+
+```mermaid
+flowchart TB
+    INPUT["Orchestrator Wave 1 Evaluation Output"]
 
     subgraph PARSE["Parse Logic"]
-        P1["Clean markdown backticks"]
-        P2["Extract JSON from string"]
-        P3["Find evaluation_decision.action"]
+        P1["Extract text from content[0].text"]
+        P2["Clean markdown backticks"]
+        P3["Extract JSON with regex"]
+        P4["Find evaluation_decision.action"]
     end
 
-    subgraph CHECK["Iteration Check"]
-        C1{"currentIteration >= maxIterations?"}
+    subgraph OUTPUT["Output"]
+        JSON["Parsed JSON with<br/>should_continue, should_retry flags"]
     end
 
-    subgraph OUTPUT["Final Decision"]
-        FORCE["action = 'continue'<br/>(forced)"]
-        PASS["action = evaluation_decision.action"]
-    end
-
-    INPUT --> PARSE --> P3
-    P3 --> CHECK
-    C1 -->|"Yes (iteration ≥ 2)"| FORCE
-    C1 -->|"No"| PASS
+    INPUT --> PARSE --> OUTPUT
 ```
 
 **JavaScript Logic:**
 ```javascript
-const currentIteration = constants.iteration_count || 1;
-const maxIterations = constants.SEMANTIC_CONSTANTS?.MAX_RETRY_ITERATIONS || 2;
+const output = $input.first().json;
+let text = output.content?.[0]?.text || output.text || output.output || '';
 
-// CRITICAL: Force continue if max iterations reached
-if (currentIteration >= maxIterations) {
-  action = 'continue';  // Override any retry request
-}
+// Clean markdown
+text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
-return {
-  decision: {
-    action: action,  // "continue" or "retry"
-    should_retry: action === 'retry' && currentIteration < maxIterations
+// Extract JSON
+const match = text.match(/\{[\s\S]*\}/);
+const parsed = JSON.parse(match[0]);
+
+return [{
+  json: {
+    ...parsed,
+    should_continue: parsed.evaluation_decision?.action === 'continue',
+    should_retry: parsed.evaluation_decision?.action === 'retry'
   }
-};
+}];
 ```
 
 ---
 
-### 5. Switch Node (Retry?)
+### 6. Switch Node (Retry Wave 1?)
 
-**Role**: Route flow based on action value.
+**Role**: Route flow based on evaluation decision.
 
 ```mermaid
 flowchart LR
-    SW{{"Switch: Retry?"}}
+    SW{{"Retry Wave 1?<br/>Switch"}}
 
-    SW -->|"Output 0<br/>action === 'retry'"| RETRY["Prepare Retry Context"]
-    SW -->|"Output 1<br/>action === 'continue'"| SYNTH["Orchestrator Synthesis"]
+    SW -->|"Output 0<br/>action === 'continue'"| WAVE2["Wave 2 Agents"]
+    SW -->|"Output 1<br/>action !== 'continue'"| LOOP["Generate UUID<br/>(loop back)"]
 ```
 
 **Switch Conditions (exact from workflow):**
 
 | Output | Condition | Destination |
 |--------|-----------|-------------|
-| Output 0 (retry) | `$json.decision.action === "retry"` | Prepare Retry Context |
-| Output 1 (continue) | `$json.decision.action === "continue"` | Orchestrator Synthesis |
+| Output 0 (continue) | `$json.evaluation_decision.action === "continue"` | Get historical recommendations + Wave 2 agents |
+| Output 1 (retry wave) | `$json.evaluation_decision.action !== "continue"` | Generate UUID (loop back to start) |
 
----
-
-### 6. Prepare Retry Context (Code Node)
-
-**Role**: Increment iteration counter and prepare data for retry.
-
-```javascript
-// Increment iteration counter
-const newIterationCount = (input.decision.current_iteration || 1) + 1;
-
-// Build retry context
-const retryContext = {
-  // Original contact data (passthrough)
-  contact_info: originalData.contact_info,
-  activities: originalData.activities,
-
-  // Updated iteration count
-  iteration_count: newIterationCount,
-
-  // Retry metadata for Distribution to detect
-  retry_meta: {
-    is_retry: true,
-    iteration: newIterationCount,
-    max_iterations: 2,
-    retry_instructions: input.decision.retry_instructions,
-    retry_reason: "Evaluation Orchestrator requested retry"
-  }
-};
-```
+**Note**: The retry loop goes back to Generate UUID, which restarts the entire workflow. The max_wave1_iteration is set to 3 in Save data call node.
 
 ---
 
@@ -762,10 +735,10 @@ const retryContext = {
 ```mermaid
 flowchart TB
     subgraph INPUTS["Inputs Received"]
-        W1["Wave 1 Results<br/>(4 agent analyses)"]
-        W2["Wave 2 Results<br/>(channel, content, sequence)"]
-        HIST["Historical validated examples"]
-        CONTACT["Contact info"]
+        W1["Wave 1 Results<br/>(4 agent analyses from Wave1_results)"]
+        W2["Wave 2 Results<br/>(channel, content, sequence from Wave2_results)"]
+        CONTACT["Contact info<br/>(from Webhook)"]
+        TODAY["Today's date<br/>($today)"]
     end
 
     subgraph DECISION_TREE["Decision Tree"]
@@ -796,6 +769,12 @@ flowchart TB
     D5 -->|"Yes"| LIGHT
     D5 -->|"No"| SEND
 ```
+
+**Input Sources (from user message):**
+- Wave 1 Results: `$('Call Context Analyzer').all().first().json.output` + other agents
+- Wave 2 Results: `$('Call Content Generator').all().first().json.output` + other agents
+- Contact Info: `$('Webhook').first().json`
+- Today's Date: `$today.toString()`
 
 **Decision Matrix (from system message):**
 
@@ -898,51 +877,57 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph WAVE1["WAVE 1: Analysis"]
-        OD["Distribution<br/>Sonnet 4 @ 0.2"]
-        OD -->|"Calls all 4"| T1234["Context + Opportunity +<br/>State + Timing"]
+        SDC["Save data call"]
+        SDC -->|"Calls all 4 in parallel"| T1234["Context + Opportunity +<br/>State + Timing"]
+        T1234 --> M1["Wave1_results<br/>Merge"]
     end
 
-    subgraph WAVE2["WAVE 2: Action + QC"]
-        OE["Evaluation<br/>Opus 4.5 @ 0.4"]
-        OE -->|"Calls all 3"| T567["Channel + Content +<br/>Sequence"]
-        OE -->|"Quality Check"| QC{"Scores ≥ 0.6?<br/>No contradictions?"}
+    subgraph EVAL["WAVE 1 Evaluation"]
+        M1 --> OWE["Wave 1 Evaluation<br/>Opus 4.5 @ 0.1"]
+        OWE --> QC{"Factual accuracy?<br/>No hallucinations?"}
+    end
+
+    subgraph WAVE2["WAVE 2: Action"]
+        QC -->|"continue"| GH["Get historical"]
+        QC -->|"continue"| T567["Channel + Content +<br/>Sequence"]
+        GH --> T567
+        T567 --> M2["Wave2_results<br/>Merge"]
     end
 
     subgraph RETRY_LOGIC["Retry Decision"]
-        QC -->|"No + iteration < 2"| PRC["Prepare Retry<br/>iteration++"]
-        PRC --> OD
-        QC -->|"Yes OR iteration ≥ 2"| CONTINUE["Continue"]
+        QC -->|"retry"| LOOP["Loop to Generate UUID<br/>(max 3 iterations)"]
+        LOOP --> SDC
     end
 
     subgraph WAVE3["WAVE 3: Synthesis"]
-        OS["Synthesis<br/>Opus 4.5 @ 0.6"]
+        M2 --> OS["Synthesis<br/>Opus 4.5 @ 0.6"]
         OS --> DECISION{"Final Decision"}
         DECISION -->|"Content exists +<br/>No blockers"| SEND["send_message"]
         DECISION -->|"Meeting scheduled OR<br/>Explicit wait request"| WAIT["wait"]
         DECISION -->|"5+ outbounds<br/>no response"| BREAKUP["break_up"]
     end
 
-    CONTINUE --> OS
-
-    WAVE1 --> WAVE2
+    WAVE1 --> EVAL
+    EVAL --> WAVE2
+    WAVE2 --> WAVE3
 ```
 
 ---
 
 ## For AI Agents: Critical Rules
 
-1. **Three Waves**: Analysis (4 agents) → Action (3 agents) → Synthesis
-2. **Retry Loop**: Max 2 iterations, forced continue at max
+1. **Three Waves**: Analysis (4 agents in parallel) → Evaluation → Action (3 agents in parallel) → Synthesis
+2. **Retry Loop**: Max 3 iterations (max_wave1_iteration=3), loops back to Generate UUID
 3. **Default is ACTION**: Prefer `send_message` over `wait`
 4. **Ghosting Rules**: 5+ outbounds without response = break_up
 5. **Content Passthrough**: Synthesis uses Content Generator output exactly
 6. **Anti-Hallucination**: All claims must trace to JSON input paths
-7. **Historical Learning**: Last 10 validated recommendations used
-8. **Wave 2 Data Source**: Tools receive Webhook.body, NOT Wave 1 output
-9. **Tool Execution**: `ai_tool` connections - orchestrator decides invocation
-10. **Memory Isolation**: Each orchestrator has separate PostgreSQL table
-11. **Immediate Response**: Webhook returns session_id, processing is async
-12. **Execution Time**: ~7 minutes total per contact
+7. **Historical Learning**: Last 10 validated recommendations used (fetched after Wave 1 evaluation)
+8. **Wave 1 Data Source**: Agents receive Save data call output (contains Webhook data + session_id)
+9. **Wave 2 Data Source**: Agents receive Wave1_results + Webhook (both sources)
+10. **Direct Execution**: Agents called via executeWorkflow nodes, not through orchestrator tools
+11. **Immediate Response**: Webhook returns session_id immediately, processing is async
+12. **Execution Time**: ~10 minutes total per contact
 
 ---
 

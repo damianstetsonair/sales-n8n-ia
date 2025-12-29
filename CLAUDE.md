@@ -35,10 +35,10 @@ sales-ia/
 
 1. Import `n8n-workflow.json` into n8n
 2. Configure Claude/Anthropic API credentials
-3. Trigger webhook at `/multi-agent-orchestrator` with contact data
+3. Trigger webhook at `/parallel-kam-agent` with contact data
 
 ```bash
-curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
+curl -X POST https://your-n8n/webhook/parallel-kam-agent \
   -H "Content-Type: application/json" \
   -d @webhook-input-contact-example.json
 ```
@@ -46,21 +46,28 @@ curl -X POST https://your-n8n/webhook/multi-agent-orchestrator \
 ## Architecture: 3-Wave Pipeline
 
 ```
-WAVE 1: ANALYSIS (Parallel)
-├── Agent 1: Context & Relationship Analyzer
-├── Agent 2: Opportunity Detector
-├── Agent 3: State Analyzer
-└── Agent 4: Timing Strategist
-    ↓ Distribution Orchestrator
+WAVE 1: ANALYSIS (Parallel Execution, max 3 iterations)
+├── Agent 1: Context & Relationship Analyzer (executeWorkflow)
+├── Agent 2: Opportunity Detector (executeWorkflow)
+├── Agent 3: State Analyzer (executeWorkflow)
+└── Agent 4: Timing Strategist (executeWorkflow)
+    ↓ Merge Wave1_results
+    ↓ Orchestrator Wave 1 Evaluation (validates accuracy)
+    ↓ Parse evaluation JSON
+    ↓ Retry Switch (continue or retry, max 3 iterations)
 
-WAVE 2: EXECUTION (Sequential)
-├── Agent 5: Channel Selector
-├── Agent 6: Content Generator
-└── Agent 7: Sequence Strategist
-    ↓ Evaluation Orchestrator
+WAVE 2: EXECUTION (Parallel Execution)
+├── Get historical recommendations (Supabase)
+├── Agent 5: Channel Selector (executeWorkflow)
+├── Agent 6: Content Generator (executeWorkflow)
+└── Agent 7: Sequence Strategist (executeWorkflow)
+    ↓ Merge Wave2_results
 
 WAVE 3: SYNTHESIS
-└── Final recommendation with channel, content, timing
+└── Orchestrator Synthesis (final decision maker)
+    ↓ Parse JSON
+    ↓ Save to Supabase
+    ↓ Notify via Slack/Zapier
 ```
 
 ## 🚨 V12.0 Active Customer Detection (CRITICAL FIX)
@@ -453,17 +460,17 @@ Scans emails/notes for scheduled meetings that may not be in the calendar yet:
 }
 ```
 
-### Synthesis Safety Checks (5 Checks)
+### Synthesis Safety Checks (5 Checks) - ENHANCED V15.0
 
 Before final output, Synthesis runs 5 safety checks:
 
 | Check | What it Validates | Action if Failed |
 |-------|-------------------|------------------|
-| Multi-Deal Consistency | OPEN deal → no re-engagement template | REJECT |
+| Unclosed Loops | Unfulfilled promises < 30d must be addressed | BLOCK |
 | Multi-Owner Coordination | Other team member active < 14d | BLOCK |
-| Scheduled Touchpoint Respect | Touchpoint < 30 days | WAIT |
-| Temporal Reference Accuracy | Message matches actual recency | REJECT |
-| Activity Recency Sanity | High activity + long gap = scan error | FLAG |
+| Temporal Reference | Message matches actual recency | REJECT |
+| Open Deal Template | OPEN deal → no re-engagement template | REJECT |
+| Churn Signal | Churned customers properly handled | BLOCK |
 
 **Output:**
 ```json
@@ -522,6 +529,527 @@ Context Analyzer now outputs `deal_context` with messaging constraints:
 **When other team member active:**
 - ❌ Sending parallel outreach
 - ❌ Ignoring scheduled touchpoints
+
+---
+
+## 🚀 V15.0 AE-Agent Enhancements (December 2025)
+
+V15.0 integrates proven business rules from AE-Agent to enrich prompt quality.
+
+### New Features Added:
+
+#### 1. Unclosed Loops Detection (State Analyzer)
+Detects unfulfilled promises and unanswered questions:
+- Scans OUTBOUND for promises: "je t'envoie", "je te rappelle", "on se cale"
+- Verifies if promises were fulfilled (doc sent, call made, meeting scheduled)
+- Outputs `unfulfilled_promises[]` with `days_overdue` and `must_address_first` flag
+
+#### 2. Must Stay On Topic Flag (State Analyzer → Content Generator)
+```json
+"must_stay_on_current_topic": {
+  "flag": true,
+  "current_topic": "send_document",
+  "topic_reason": "Unfulfilled promise to send document",
+  "instruction_for_content_generator": "Message MUST address the unfulfilled promise before introducing new topics"
+}
+```
+
+#### 3. Hook Generation for Engagement Signals (State Analyzer)
+Each engagement signal now includes ready-to-use hooks:
+```json
+"hook_for_content_generator": {
+  "primary_hook": "J'ai vu que tu as consulté notre doc sécurité, as-tu des questions?",
+  "alternative_hooks": ["Tu as jeté un œil..."],
+  "usage_instruction": "Use primary_hook as opening line"
+}
+```
+
+#### 4. Holiday Coherence Validation (Content Generator)
+Prevents embarrassing date-incoherent messages:
+- "Bonne année" only allowed Dec 20 - Jan 15
+- "Bonnes vacances" only allowed Jun 15 - Aug 31
+- "Bonne rentrée" only allowed Aug 20 - Sep 15
+
+#### 5. Engagement Signal Channel Mapping (Channel Selector)
+Maps engagement signals to preferred response channels:
+| Signal | Preferred Channel | Boost |
+|--------|-------------------|-------|
+| LINKEDIN_LIKE | LINKEDIN | +0.30 |
+| LINKEDIN_COMMENT | LINKEDIN | +0.35 |
+| DOCUMENT_VIEW | EMAIL | +0.30 |
+
+#### 6. Post-Synthesis Validation Scoring (Orchestrator Evaluation)
+5-dimension validation system:
+- Temporal Accuracy (0.0-1.0)
+- Tone Appropriateness (0.0-1.0)
+- Value Density (0.0-1.0)
+- Hook Usage (0.0-1.0)
+- Structure Compliance (0.0-1.0)
+
+Overall score >= 0.80 = PASS
+
+#### 7. Enhanced Synthesis Safety Checks
+Added override priority (highest to lowest):
+1. CHURN DETECTED + RESPONDED → wait
+2. CHURN DETECTED + NOT RESPONDED → send_message (acknowledgment)
+3. MULTI-OWNER ACTIVE TOUCHPOINT → wait
+4. MEETING SCHEDULED → wait
+5. EXPLICIT TIMING AGREEMENT → wait until date
+6. UNCLOSED LOOP < 30 DAYS → must address in content
+7. OPEN DEAL → must use sales template
+
+#### 8. Chronology Verification Output (State Analyzer)
+Structured output for downstream validation:
+```json
+"chronology_verification": {
+  "reference_date_used": "2025-12-20T00:00:00+01:00",
+  "last_inbound": {...},
+  "last_outbound": {...},
+  "most_recent_overall": "OUTBOUND",
+  "days_since_last_contact": 3,
+  "sequence_analysis": {
+    "who_spoke_last": "us",
+    "awaiting_response_from": "them"
+  }
+}
+```
+
+---
+
+## 🚀 V15.1 Bug Fixes (December 2025)
+
+V15.1 addresses two critical bugs identified through decision evaluation testing.
+
+### Bug 1: Consecutive Outbound Miscounting (CRITICAL)
+
+**The Problem:**
+State Analyzer was incorrectly counting consecutive outbound messages after the last inbound. It would report "2 consecutive outbounds" when the actual count was 7+ messages.
+
+**Real Example of the Bug:**
+```
+What the system reported:
+  - "consecutive_outbound_without_reply": 2
+  - Risk assessment: "approaching ghosting threshold"
+
+Reality (scanning ALL activities after last INBOUND):
+  2025-09-29 OUTBOUND: "Sous la 🌊?"
+  2025-09-19 OUTBOUND: LinkedIn event link
+  2025-09-12 OUTBOUND: "Jeudi 18, 15h?"
+  2025-09-12 OUTBOUND: "Avec plaisir"
+  2025-09-12 OUTBOUND: "Oui je me souvient..."
+  2025-09-12 OUTBOUND: "Désolé pour le délai"
+  2025-09-12 OUTBOUND: "Semaine prochaine..."
+  2025-09-12 OUTBOUND: "Bonjour Anne-claire"
+  → Actual count: 8 consecutive outbounds (well past ghosting threshold!)
+```
+
+**The Fix:**
+1. Added detailed algorithm in State Analyzer for counting ALL outbounds after last inbound
+2. Added mandatory `consecutive_outbound_tracking` output with full list of outbound activities
+3. Added Check 6 in Orchestrator Evaluation to independently verify the count
+4. Common bug patterns now explicitly documented:
+   - Bug: Only counting recent messages
+   - Bug: Counting unique dates instead of individual messages
+   - Bug: Multiple messages on same day counted as one
+
+### Bug 2: Multiple Questions in Message (Best Practice Violation)
+
+**The Problem:**
+Content Generator was producing messages with 2+ questions, violating Best Practice #1: "Une seule question par email."
+
+**Real Example of the Bug:**
+```
+❌ Generated message with 2 questions:
+"Je te l'envoie si ça t'intéresse? On se cale un call de 15 min la semaine prochaine?"
+
+✅ Correct (1 combined question):
+"Je te l'envoie et on en parle en call la semaine prochaine?"
+```
+
+**The Fix:**
+1. Added STEP -1.35 in Content Generator: Maximum One Question Rule
+2. Added question count validation algorithm with regeneration logic
+3. Added question combination patterns (how to merge 2 questions into 1)
+4. Added Check 6 in Orchestrator Synthesis to validate question count
+5. If Content Generator fails, Synthesis MUST fix before outputting
+
+### New Output Requirements
+
+**State Analyzer must include:**
+```json
+"consecutive_outbound_tracking": {
+  "last_inbound_date": "2025-09-12T07:00:00+00:00",
+  "outbound_count_after_last_inbound": 8,
+  "outbound_activities_list": [...],
+  "ghosting_threshold_exceeded": true
+}
+```
+
+**Content Generator must include:**
+```json
+"question_count_check": {
+  "questions_found": ["On se cale 15 min?"],
+  "question_count": 1,
+  "validation_passed": true
+}
+```
+
+**Orchestrator Synthesis now has 6 safety checks (was 5):**
+- Check 1: Unclosed loops
+- Check 2: Multi-owner coordination
+- Check 3: Temporal reference accuracy
+- Check 4: Open deal template consistency
+- Check 5: Churn signal detection
+- Check 6: Question count validation (NEW)
+
+---
+
+## 🚀 V15.2 Bug Fixes (December 2025)
+
+V15.2 addresses two accuracy issues identified through decision evaluation testing.
+
+### Bug 1: Off-by-One Consecutive Outbound Counting
+
+**The Problem:**
+State Analyzer was sometimes including messages with the same timestamp as the last INBOUND in the outbound count, leading to off-by-one errors (e.g., reporting 8 when actual was 7).
+
+**The Fix:**
+1. Updated counting algorithm to use strict `>` comparison (not `>=`)
+2. Added explicit note: "Count ONLY messages with recorded_on > last_inbound.recorded_on"
+3. Updated examples to show correct count (7, not 8)
+4. Added validation point: "The last_inbound itself does NOT count"
+
+### Bug 2: Meeting Responsibility Misattribution
+
+**The Problem:**
+When a meeting was proposed but never materialized, the system was incorrectly attributing responsibility. Example: If WE asked the contact to send the invite ("Si ok envoie moi une invit bertran@airsaas.io"), the risk_factors incorrectly said "We dropped the ball" when it should have said "Contact was asked to send invite but never followed through."
+
+**The Fix:**
+1. Added MEETING RESPONSIBILITY ATTRIBUTION section in State Analyzer
+2. Detects invite delegation patterns:
+   - "envoie moi une invit" → CONTACT should send
+   - "je t'envoie une invit" → WE should send
+3. Outputs `meeting_responsibility` object with `who_dropped_ball`
+4. Added Check 7 in Orchestrator Synthesis to validate risk_factors attribution
+
+**New Output Structure (State Analyzer):**
+```json
+"meeting_responsibility": {
+  "meeting_proposed": true,
+  "meeting_materialized": false,
+  "invite_responsibility": "CONTACT",
+  "responsibility_quote": "Si ok envoie moi une invit bertran@airsaas.io",
+  "who_dropped_ball": "CONTACT",
+  "implication_for_risk_factors": "Contact did not follow through - this is THEIR non-response, not our failure"
+}
+```
+
+**Forbidden Patterns:**
+- ❌ When CONTACT was asked: "We dropped the ball on meeting invite"
+- ✅ Correct: "Contact was asked to send calendar invite but never followed through"
+
+---
+
+## 🚀 V15.3 Semantic Outbound Analysis (December 2025)
+
+V15.3 introduces semantic distinction between conversation bursts and follow-up attempts for accurate ghosting detection.
+
+### The Problem
+
+The system was counting raw outbound messages without considering context. Example:
+- 7 outbound messages after last inbound → reported as "7 consecutive outbounds"
+- But 5 of those messages were sent the SAME DAY as the inbound (active conversation)
+- Only 2 were actual follow-up attempts on different days
+
+This led to overstated ghosting patterns like "7 consecutive outbounds over 88 days" when the reality was "2 follow-up attempts over 17 days."
+
+### The Fix: Conversation Burst vs Follow-up Attempts
+
+**Definitions:**
+- **Conversation Burst**: Multiple messages sent on the SAME DAY as the last inbound. These are part of active conversation, not separate outreach attempts.
+- **Follow-up Attempts**: Messages sent on DIFFERENT days after the last inbound. These are distinct attempts to re-engage.
+
+**Example Analysis:**
+```
+Raw data after last inbound (Sept 12):
+  - Sept 12: 5 messages → CONVERSATION BURST (same day = active chat)
+  - Sept 19: 1 message → FOLLOW-UP ATTEMPT #1
+  - Sept 29: 1 message → FOLLOW-UP ATTEMPT #2
+
+❌ WRONG: "7 consecutive outbounds" (overstates intensity)
+✅ CORRECT: "2 follow-up attempts over 17 days" (accurate pattern)
+```
+
+### Updated Ghosting Thresholds
+
+Thresholds now apply to DISTINCT FOLLOW-UP ATTEMPTS, not raw message count:
+
+| Distinct Follow-up Attempts | State | Strategy |
+|-----------------------------|-------|----------|
+| 0-1 | Normal | Standard follow-up OK |
+| 2-3 | Caution | Lighter touch recommended |
+| 4+ | Ghosting | Break-up or no_action |
+
+### New Output Structure (State Analyzer)
+
+```json
+"consecutive_outbound_tracking": {
+  "raw_outbound_count": 7,
+  "conversation_burst_analysis": {
+    "burst_date": "2025-09-12",
+    "burst_message_count": 5,
+    "burst_context": "Active conversation same day as inbound"
+  },
+  "follow_up_attempts": {
+    "distinct_dates": ["2025-09-19", "2025-09-29"],
+    "distinct_attempt_count": 2,
+    "days_between_attempts": 10
+  },
+  "ghosting_assessment": {
+    "metric_used": "distinct_follow_up_attempts",
+    "count": 2,
+    "threshold": 4,
+    "threshold_exceeded": false,
+    "assessment": "CAUTION - 2 follow-up attempts without reply"
+  }
+}
+```
+
+### Key Insight
+
+**Ghosting is about PERSISTENCE, not VERBOSITY.**
+
+A salesperson who sent 5 messages during an active conversation is NOT the same as someone who sent 5 follow-up attempts over several weeks. The ghosting assessment must reflect the PATTERN of outreach, not just the volume.
+
+---
+
+## Wave 1 Retry Configuration
+
+The workflow includes a retry mechanism for Wave 1 with dynamic configuration from the `Save data call` node:
+
+```
+Reference: {{ $('Save data call').item.json.max_wave1_iteration }}
+Default value: 3
+```
+
+### Retry Logic
+
+| Iteration | Behavior |
+|-----------|----------|
+| 1 | Normal execution |
+| 2 | First retry (if Evaluation returns "retry") |
+| N (max) | Final attempt (if still failing, force "continue_with_warnings") |
+
+### Infinite Loop Prevention
+
+The Orchestrator Evaluation must respect `max_wave1_iteration`:
+- Value is dynamically referenced from `Save data call` node
+- If same errors persist after clear retry instructions → switch to `continue_with_warnings`
+- Let Synthesis apply its 7 safety checks to handle edge cases
+- Never trigger infinite retry loops
+
+---
+
+## 🚀 V15.4 Evaluation Feedback Improvements (December 2025)
+
+V15.4 addresses feedback from decision evaluation testing to improve accuracy and clarity.
+
+### Fix 1: Evidence Trail Uses activity_id (Not Array Indices)
+
+**The Problem:**
+Evidence trail was using array indices like `activities[9]` which are unreliable because activity ordering may vary.
+
+**The Fix:**
+Use `activity_id` for stable references:
+
+```json
+// ❌ WRONG
+"json_path": "activities[9].metadata.body"
+
+// ✅ CORRECT
+"activity_id": "urn:li:msg_message:MTc1OTEyOTcwOTM4...",
+"recorded_on": "2025-09-29T07:00:00+00:00"
+```
+
+### Fix 2: Follow-up Type Classification
+
+**The Problem:**
+"2 consecutive outbounds" was misleading - one was a value-add (event link), one was a direct follow-up. Different intensities.
+
+**The Fix:**
+State Analyzer now classifies each follow-up attempt:
+
+| Type | Description |
+|------|-------------|
+| `direct_follow_up` | Explicit nudge ("Sous la 🌊?") |
+| `value_add` | Sharing content (event link) |
+| `check_in` | Soft touch |
+| `meeting_request` | Proposing meeting |
+
+```json
+"attempt_details": [
+  {"date": "2025-09-19", "type": "value_add", "is_direct_follow_up": false},
+  {"date": "2025-09-29", "type": "check_in", "is_direct_follow_up": true}
+]
+```
+
+### Fix 3: Meeting Responsibility Phrasing
+
+**The Problem:**
+Message said "ça n'a pas pu se faire" (mutual-sounding) when CONTACT was supposed to send the invite.
+
+**The Fix:**
+Content Generator now checks `meeting_responsibility.invite_responsibility`:
+
+```
+IF invite_responsibility = "CONTACT":
+  ❌ "On avait prévu de se parler mais ça n'a pas pu se faire"
+  ✅ "Tu devais m'envoyer l'invite mais on s'est perdus de vue"
+
+IF invite_responsibility = "US":
+  ❌ "Tu devais envoyer l'invite"
+  ✅ "Je devais t'envoyer l'invite et ça m'a échappé"
+```
+
+### Fix 4: Name Parsing Logic
+
+**The Problem:**
+Contact `full_name: "anne-claire_thery"` needs proper parsing for salutation.
+
+**The Fix:**
+Content Generator now documents name parsing:
+- Replace underscores with hyphens for compound names
+- Capitalize properly
+- Extract first name for salutation
+
+```json
+"name_parsing": {
+  "raw_full_name": "anne-claire_thery",
+  "parsed_first_name": "Anne-Claire"
+}
+```
+
+### Fix 5: Base Score Explanation
+
+**The Problem:**
+`base_score: 0.5` in opportunity_strength_breakdown was not explained.
+
+**The Fix:**
+Synthesis must include `base_score_reasoning`:
+
+| Scenario | base_score | Reasoning |
+|----------|------------|-----------|
+| No deal, new lead | 0.50 | Neutral starting point |
+| Open deal | 0.60 | Existing sales engagement |
+| Closed-won active | 0.65 | Proven relationship |
+| Churned | 0.30 | Negative exit history |
+
+---
+
+## 🚀 V15.5 Meeting & Pricing Accuracy Improvements (December 2025)
+
+V15.5 addresses accuracy issues identified through decision evaluation testing, focusing on meeting characterization and pricing distinction.
+
+### Fix 1: Meeting/Call Substantive Analysis
+
+**The Problem:**
+The system was characterizing all MEETING activities as business-substantive without analyzing the actual content. A 4-minute informal call about room availability was being reported as a "catchup meeting maintaining relationship" when it had no business substance.
+
+**Example of the Bug:**
+```
+Raw data:
+  - Duration: 4 minutes
+  - Content: "La conversation a été informelle, sans aborder de sujets commerciaux spécifiques"
+
+❌ WRONG: "recent_meeting_held with relationship maintained"
+✅ CORRECT: "brief informal call about logistics, no business substance"
+```
+
+**The Fix (State Analyzer):**
+Added `meeting_characterization` output with nature classification:
+
+| meeting_nature | Description | Evidence Weight |
+|----------------|-------------|-----------------|
+| BUSINESS_SUBSTANTIVE | 20+ min, business topics | Full weight |
+| BUSINESS_BRIEF | 10-20 min, some business | 0.7x weight |
+| INFORMAL_LOGISTICAL | <10 min, no business | 0.2x weight |
+
+New output:
+```json
+"meeting_characterization": [{
+  "activity_id": "98079708032",
+  "duration_minutes": 4,
+  "meeting_nature": "INFORMAL_LOGISTICAL",
+  "business_substance": "low",
+  "NOT_a_business_meeting": true
+}]
+```
+
+### Fix 2: Duration Source Attribution
+
+**The Problem:**
+Duration was being cited from NOTE activities instead of the actual CALL activity.
+
+**The Fix:**
+Duration must be sourced from CALL activity, not NOTE:
+```
+❌ WRONG: Citing "32-min demo" from NOTE (activity_id: 96302085438)
+✅ CORRECT: Citing "32-min demo" from CALL (activity_id: 96299200111)
+```
+
+### Fix 3: Pricing Type Distinction (Opportunity Detector)
+
+**The Problem:**
+"14,000€ pricing discussed" implies product pricing, but it was actually "accompagnement" (consulting/implementation) cost.
+
+**The Fix:**
+Added `pricing_sub_type` classification:
+
+| Type | Meaning | Examples |
+|------|---------|----------|
+| PRODUCT_PRICING | SaaS license/subscription | "28,800€ licence annuelle" |
+| SERVICE_PRICING | Consulting/implementation | "14,000€ accompagnement" |
+
+New output:
+```json
+{
+  "hook_type": "budget_signal",
+  "pricing_sub_type": "SERVICE_PRICING",
+  "pricing_clarification": "14,000€ is for accompagnement (workshops), NOT product licensing"
+}
+```
+
+### Fix 4: synthesis_confidence Calculation (Orchestrator Synthesis)
+
+**The Problem:**
+`synthesis_confidence: 0` was being output as a default value, which is invalid.
+
+**The Fix:**
+Added mandatory calculation formula:
+```
+synthesis_confidence = weighted_average(
+  relationship_clarity * 0.20,
+  channel_certainty * 0.15,
+  content_quality * 0.20,
+  timing_accuracy * 0.15,
+  opportunity_strength * 0.20,
+  safety_checks_ratio * 0.10
+)
+```
+
+Minimum valid value is ~0.30 (all defaults). Value of 0 triggers recalculation.
+
+### Fix 5: Contact Name Parsing (Content Generator)
+
+**The Problem:**
+Raw CRM names like "marc_gillot" need parsing for professional salutations.
+
+**The Fix:**
+Added name parsing algorithm:
+```
+"marc_gillot" → "Marc Gillot" (full) / "Marc" (salutation)
+"anne-claire_thery" → "Anne-Claire Thery" (full) / "Anne-Claire" (salutation)
+```
 
 ---
 

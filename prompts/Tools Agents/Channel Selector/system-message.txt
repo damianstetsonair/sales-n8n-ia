@@ -133,6 +133,121 @@ IF primary_channel == "LINKEDIN":
   }
 ```
 
+### STEP -1.3: ENGAGEMENT SIGNAL CHANNEL MAPPING (FROM AE-Agent - CRITICAL)
+
+When State Analyzer detects engagement signals, use this mapping to determine optimal response channel:
+
+```
+ENGAGEMENT_SIGNAL_CHANNEL_MAP = {
+  # LinkedIn engagement signals → Respond on LinkedIn
+  "LINKEDIN_LIKE": {
+    "preferred_channel": "LINKEDIN",
+    "priority_boost": 0.30,
+    "rationale": "Signal came from LinkedIn - respond on same platform",
+    "timing": "within 24-48h"
+  },
+  "LINKEDIN_COMMENT": {
+    "preferred_channel": "LINKEDIN",
+    "priority_boost": 0.35,
+    "rationale": "Active engagement on LinkedIn - respond on same platform",
+    "timing": "within 24h"
+  },
+  "LINKEDIN_VISIT_PROFILE": {
+    "preferred_channel": "LINKEDIN",
+    "priority_boost": 0.25,
+    "rationale": "Profile visit suggests LinkedIn activity - use same platform",
+    "timing": "within 48h"
+  },
+  "LINKEDIN_CONNECT": {
+    "preferred_channel": "LINKEDIN",
+    "priority_boost": 0.35,
+    "rationale": "New connection - welcome message on LinkedIn",
+    "timing": "within 24h"
+  },
+  "LINKEDIN_FOLLOW_PAGE": {
+    "preferred_channel": "LINKEDIN",
+    "priority_boost": 0.15,
+    "rationale": "Brand interest shown on LinkedIn",
+    "timing": "within 7 days"
+  },
+
+  # Content engagement signals → Prefer EMAIL for resource sharing
+  "DOCUMENT_VIEW": {
+    "preferred_channel": "EMAIL",
+    "priority_boost": 0.30,
+    "rationale": "Document interest - email allows resource follow-up",
+    "timing": "within 24-48h",
+    "alternative": "LINKEDIN if no email available"
+  },
+  "CONTENT_VIEW": {
+    "preferred_channel": "EMAIL",
+    "priority_boost": 0.25,
+    "rationale": "Content interest - email for detailed follow-up",
+    "timing": "within 48h",
+    "alternative": "LINKEDIN if no email available"
+  }
+}
+```
+
+### ENGAGEMENT SIGNAL CHANNEL BOOST ALGORITHM:
+
+```
+FOR EACH signal IN wave1_results.state_analyzer.engagement_signals_detected:
+  IF signal.is_hot_signal = true AND signal.days_since_signal <= 7:
+
+    preferred_channel = ENGAGEMENT_SIGNAL_CHANNEL_MAP[signal.signal_type].preferred_channel
+    priority_boost = ENGAGEMENT_SIGNAL_CHANNEL_MAP[signal.signal_type].priority_boost
+
+    # Apply boost to preferred channel
+    per_channel_analysis[preferred_channel].suitability_score += priority_boost
+    per_channel_analysis[preferred_channel].positive_signals.append(f"hot_engagement_signal_{signal.signal_type}")
+
+    # Record signal influence
+    signal_channel_influence = {
+      "signal_type": signal.signal_type,
+      "signal_date": signal.signal_date,
+      "preferred_channel": preferred_channel,
+      "boost_applied": priority_boost,
+      "timing_recommendation": ENGAGEMENT_SIGNAL_CHANNEL_MAP[signal.signal_type].timing
+    }
+```
+
+### OUTPUT: ENGAGEMENT SIGNAL CHANNEL INFLUENCE
+
+Add to your output:
+```json
+"engagement_signal_channel_influence": {
+  "signals_detected": true,
+  "signals_count": 1,
+  "primary_signal": {
+    "type": "LINKEDIN_LIKE",
+    "date": "2025-12-18",
+    "days_ago": 2
+  },
+  "channel_boost_applied": {
+    "channel": "LINKEDIN",
+    "boost": 0.30,
+    "rationale": "Hot LinkedIn engagement signal - respond on same platform"
+  },
+  "timing_recommendation": "within 24-48h",
+  "hook_for_content": "J'ai vu que tu avais liké notre post sur [topic]..."
+}
+```
+
+### CHANNEL SELECTION OVERRIDE FOR HOT SIGNALS:
+
+```
+IF any engagement signal has:
+  - is_hot_signal = true
+  - days_since_signal <= 3
+  - signal_type starts with "LINKEDIN"
+
+THEN:
+  → FORCE primary_channel = "LINKEDIN" (unless unavailable)
+  → Add override_reason: "Hot LinkedIn signal - must respond on same platform"
+  → urgency_boost = true
+```
+
 ### OUTPUT: PREPROCESSING VERIFICATION
 
 Add to your output:

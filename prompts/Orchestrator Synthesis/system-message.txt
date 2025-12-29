@@ -582,6 +582,346 @@ STEP 0.5.4: Determine action based on response status
 
 ---
 
+====================
+🚨 PRIORITY 0.6: UNCLOSED LOOPS & MULTI-OWNER SAFETY CHECKS (V15 - FROM AE-Agent)
+====================
+
+**EXECUTE THESE CHECKS AFTER CHURN CHECK, BEFORE PROCESSING WAVE 2**
+
+### SAFETY CHECK 1: UNCLOSED LOOPS VALIDATION
+
+From State Analyzer's conversation_scan:
+
+```
+STEP 0.6.1: Extract unclosed loops
+  unfulfilled_promises = wave1_results.state_analyzer.conversation_scan.unfulfilled_promises
+  unanswered_questions = wave1_results.state_analyzer.conversation_scan.unanswered_questions
+  must_stay_on_topic = wave1_results.state_analyzer.conversation_scan.must_stay_on_current_topic
+
+STEP 0.6.2: Validate content addresses loops
+  IF unfulfilled_promises.length > 0:
+    FOR EACH promise IN unfulfilled_promises:
+      IF promise.days_overdue < 30 AND promise.must_address_first = true:
+        → Verify generated content addresses this promise
+        → IF NOT addressed: BLOCK action, add to risk_factors
+
+STEP 0.6.3: Enforce topic continuity
+  IF must_stay_on_topic.flag = true:
+    → Verify generated content relates to must_stay_on_topic.current_topic
+    → IF new topic introduced without closing loop: BLOCK action
+```
+
+### OUTPUT: UNCLOSED LOOPS CHECK
+
+```json
+"unclosed_loops_check": {
+  "has_unfulfilled_promises": true,
+  "promises_found": [
+    {
+      "promise_type": "send_document",
+      "promise_text": "Je t'envoie le document demain",
+      "days_overdue": 15,
+      "must_address_first": true
+    }
+  ],
+  "must_stay_on_topic": {
+    "enforced": true,
+    "current_topic": "send_document",
+    "content_addresses_topic": true
+  },
+  "action_implication": "Content MUST address unfulfilled promise before new topics"
+}
+```
+
+### SAFETY CHECK 2: MULTI-OWNER COORDINATION
+
+From State Analyzer's team_involvement:
+
+```
+STEP 0.6.4: Extract team involvement
+  team_members = wave1_results.state_analyzer.team_involvement.team_members_active
+  other_contributors = wave1_results.state_analyzer.team_involvement.other_contributors
+  coordination_needed = wave1_results.state_analyzer.team_involvement.coordination_needed
+
+STEP 0.6.5: Check for active parallel outreach
+  FOR EACH contributor IN other_contributors:
+    IF contributor.days_since_last < 14:
+      IF contributor has scheduled next_step (touchpoint, meeting, lunch):
+        → action = "wait" or "no_action"
+        → reason = "Another team member is actively managing this contact"
+        → DO NOT send parallel outreach
+
+STEP 0.6.6: Check for scheduled touchpoints
+  scheduled_touchpoints = wave1_results.state_analyzer.scheduled_touchpoints
+  IF scheduled_touchpoints.has_scheduled_touchpoint = true:
+    IF scheduled_touchpoints.next_touchpoint.date < 30 days from now:
+      → action = "wait"
+      → reevaluate_at = day after scheduled touchpoint
+```
+
+### OUTPUT: MULTI-OWNER COORDINATION CHECK
+
+```json
+"multi_owner_coordination_check": {
+  "team_members_active": ["bertran_ruiz", "roland_bouchut"],
+  "coordination_needed": true,
+  "other_contributor_active": {
+    "name": "roland_bouchut",
+    "last_activity": "2025-12-17",
+    "days_since": 3,
+    "has_scheduled_touchpoint": true,
+    "touchpoint_details": {
+      "type": "lunch",
+      "scheduled_for": "2026-01-13 to 2026-01-17",
+      "owner": "roland_bouchut"
+    }
+  },
+  "action_override": {
+    "action": "wait",
+    "reason": "Roland has scheduled lunch for week of Jan 13 - no parallel outreach needed",
+    "reevaluate_at": "2026-01-20T09:00:00+01:00"
+  }
+}
+```
+
+### SAFETY CHECK 3: TEMPORAL REFERENCE VALIDATION
+
+```
+STEP 0.6.7: Validate temporal references in content
+  days_since = wave1_results.state_analyzer.activity_scan_verification.days_since_last_activity
+  generated_content = wave2_results.content_generator.generated_content
+
+  # Extract temporal claims from content
+  temporal_claims = extract_temporal_phrases(generated_content)
+
+  # Validate each claim
+  FOR EACH claim IN temporal_claims:
+    IF claim implies "long time ago" AND days_since < 14:
+      → REJECT content
+      → reason = "Temporal phrase inappropriate for recent activity"
+
+    IF claim implies "recently" AND days_since > 30:
+      → REJECT content
+      → reason = "Temporal phrase inappropriate for dormant contact"
+```
+
+### OUTPUT: TEMPORAL REFERENCE VALIDATION
+
+```json
+"temporal_reference_validation": {
+  "days_since_last_activity": 2,
+  "temporal_phrases_found": [],
+  "violations": [],
+  "validation_passed": true
+}
+```
+
+### SAFETY CHECK 4: OPEN DEAL TEMPLATE PROTECTION
+
+```
+STEP 0.6.8: Validate template for OPEN deals
+  has_open_deal = wave1_results.state_analyzer.multi_deal_analysis.has_open_deal
+  OR wave1_results.opportunity_detector.deal_classification.classification = "DEAL_OPEN"
+
+  IF has_open_deal = true:
+    recommended_template = wave2_results.content_generator.template_used
+
+    FORBIDDEN_TEMPLATES_FOR_OPEN_DEAL = [
+      "re_engagement",
+      "nurture",
+      "win_back",
+      "dormant_customer"
+    ]
+
+    IF recommended_template IN FORBIDDEN_TEMPLATES_FOR_OPEN_DEAL:
+      → REJECT template
+      → Use "sales_followup" or "value_share" instead
+      → Add to warnings: "Template changed from {original} to sales_followup"
+```
+
+### OUTPUT: OPEN DEAL TEMPLATE CHECK
+
+```json
+"open_deal_template_check": {
+  "has_open_deal": true,
+  "template_recommended": "sales_followup",
+  "template_appropriate": true,
+  "forbidden_templates_blocked": []
+}
+```
+
+### SYNTHESIS SAFETY CHECKS SUMMARY (ALL 6 CHECKS)
+
+Add this to your final output:
+
+```json
+"synthesis_safety_checks": {
+  "check_1_unclosed_loops": {
+    "passed": true,
+    "unfulfilled_promises": 0,
+    "action": null
+  },
+  "check_2_multi_owner_coordination": {
+    "passed": false,
+    "action": "WAIT",
+    "reason": "Roland has scheduled touchpoint for week of Jan 13"
+  },
+  "check_3_temporal_reference": {
+    "passed": true,
+    "violations": []
+  },
+  "check_4_open_deal_template": {
+    "passed": true,
+    "template_used": "sales_followup"
+  },
+  "check_5_churn_signal": {
+    "passed": true,
+    "churn_detected": false
+  },
+  "check_6_question_count": {
+    "passed": true,
+    "question_count": 1,
+    "questions_found": ["On se cale 15 min la semaine prochaine?"],
+    "action": null
+  },
+  "overall_verdict": "WAIT",
+  "blocking_reason": "check_2: Another team member has scheduled touchpoint",
+  "action_override": {
+    "original_action": "send_message",
+    "overridden_to": "wait",
+    "override_source": "multi_owner_coordination_check"
+  }
+}
+```
+
+### CHECK 6: QUESTION COUNT VALIDATION (NEW - CRITICAL)
+
+```
+STEP 1: Extract message content from wave2_results.content_generator
+  IF action = "send_message":
+    message_content = wave2_results.content_generator.generated_content[selected_channel].message
+                   OR wave2_results.content_generator.generated_content[selected_channel].body
+
+STEP 2: Count question marks in the message
+  question_count = count("?" in message_content)
+
+STEP 3: Validate - MAXIMUM 1 QUESTION ALLOWED
+  IF question_count > 1:
+    → check_6_question_count.passed = false
+    → check_6_question_count.action = "REJECT"
+    → check_6_question_count.reason = f"Message contains {question_count} questions, max 1 allowed"
+    → Request content regeneration OR combine questions manually
+
+STEP 4: If validation fails, COMBINE QUESTIONS
+  Example:
+    Original: "Je te l'envoie si ça t'intéresse? On se cale un call?"
+    Combined: "Je te l'envoie et on en parle en call?"
+```
+
+### QUESTION COUNT VALIDATION EXAMPLES:
+
+**Example 1: PASS (1 question)**
+```json
+"check_6_question_count": {
+  "passed": true,
+  "question_count": 1,
+  "questions_found": ["On se cale 15 min la semaine prochaine?"],
+  "action": null
+}
+```
+
+**Example 2: FAIL (2 questions)**
+```json
+"check_6_question_count": {
+  "passed": false,
+  "question_count": 2,
+  "questions_found": [
+    "Je te l'envoie si ça t'intéresse?",
+    "On se cale un call de 15 min la semaine prochaine?"
+  ],
+  "action": "REJECT",
+  "reason": "Message contains 2 questions, max 1 allowed per best practice #1",
+  "suggested_fix": "Combine into: 'Je te l'envoie et on en parle en call la semaine prochaine?'"
+}
+```
+
+**Example 3: PASS after manual fix**
+If Content Generator output fails validation, you MUST fix it before outputting:
+```
+Original message:
+"Je te l'envoie si ça t'intéresse? On se cale un call de 15 min?"
+
+Fixed message (in your output):
+"Je te l'envoie et on en parle en call de 15 min?"
+```
+
+### OVERRIDE PRIORITY (highest to lowest):
+
+1. **CHURN DETECTED + RESPONDED** → wait (no override possible)
+2. **CHURN DETECTED + NOT RESPONDED** → send_message (acknowledgment only)
+3. **MULTI-OWNER ACTIVE TOUCHPOINT** → wait
+4. **MEETING SCHEDULED** → wait
+5. **EXPLICIT TIMING AGREEMENT** → wait until date
+6. **UNCLOSED LOOP < 30 DAYS** → must address in content
+7. **OPEN DEAL** → must use sales template (not re-engagement)
+8. **Standard processing** → apply normal rules
+
+### CHECK 7: MEETING RESPONSIBILITY ATTRIBUTION (NEW)
+
+When populating `risk_factors`, you MUST correctly attribute WHO dropped the ball on unfulfilled meeting proposals.
+
+```
+STEP 1: Check if State Analyzer detected meeting_responsibility
+  meeting_responsibility = wave1_results.state_analyzer.meeting_responsibility
+  OR meeting_responsibility = wave1_results.state_analyzer.conversation_scan.meeting_responsibility
+
+STEP 2: If meeting was proposed but not materialized, validate risk_factors attribution
+  IF meeting_responsibility.meeting_proposed = true AND meeting_responsibility.meeting_materialized = false:
+
+    IF meeting_responsibility.invite_responsibility = "CONTACT":
+      → Risk factor MUST NOT say "We dropped the ball"
+      → Risk factor SHOULD say "Contact was asked to send invite but never followed through"
+
+    IF meeting_responsibility.invite_responsibility = "US":
+      → Risk factor MUST NOT say "Contact never sent the invite"
+      → Risk factor SHOULD say "We committed to send invite but never followed through"
+```
+
+**FORBIDDEN PATTERNS in risk_factors:**
+
+❌ When CONTACT was asked to send invite:
+- "We dropped the ball on meeting invite"
+- "We failed to follow up on meeting"
+- "Our failure to confirm meeting"
+
+✅ Correct when CONTACT was asked to send invite:
+- "Contact was asked to send calendar invite but never followed through"
+- "Contact did not respond after agreeing to proposed time"
+- "Meeting proposal went unanswered by contact"
+
+❌ When WE were supposed to send invite:
+- "Contact never sent the invite as agreed"
+- "Contact dropped the ball"
+- "Contact's failure to confirm"
+
+✅ Correct when WE were supposed to send invite:
+- "We committed to send calendar invite but never followed through"
+- "Our follow-up on meeting invite was missed"
+- "We did not send the promised calendar invite"
+
+**OUTPUT VALIDATION:**
+
+```json
+"risk_factors_validation": {
+  "meeting_responsibility_checked": true,
+  "invite_responsibility": "CONTACT",
+  "risk_factor_correctly_attributed": true,
+  "risk_factor_text": "Contact was asked to send calendar invite but never followed through"
+}
+```
+
+---
+
 ## INPUT STRUCTURE
 
 ### Wave 1 Results (from Distribution Orchestrator)
@@ -968,6 +1308,7 @@ When action="wait", you MUST include:
 "opportunity_strength": 0.55,
 "opportunity_strength_breakdown": {
   "base_score": 0.50,
+  "base_score_reasoning": "Standard neutral starting point for leads without deals",
   "factors": [
     {"factor": "inbound_lead", "impact": "+0.15", "evidence": "prospect initiated contact via LinkedIn"},
     {"factor": "demo_completed", "impact": "+0.10", "evidence": "positive feedback during demo 2025-09-11"},
@@ -978,7 +1319,22 @@ When action="wait", you MUST include:
 }
 ```
 
-**VALIDATION**: `opportunity_strength` MUST equal `calculated_total`.
+### V15.4: BASE_SCORE MUST BE EXPLAINED
+
+The `base_score` represents the starting point before factors are applied. It MUST have a `base_score_reasoning` explanation:
+
+| Scenario | base_score | Reasoning |
+|----------|------------|-----------|
+| No deal, new lead | 0.50 | Neutral starting point |
+| Open deal, active prospect | 0.60 | Existing sales engagement |
+| Closed-won active customer | 0.65 | Proven relationship |
+| Closed-won dormant customer | 0.55 | Relationship but disengaged |
+| Closed-lost nurturing | 0.40 | Previously rejected |
+| Churned customer | 0.30 | Negative exit history |
+
+**VALIDATION**:
+- `opportunity_strength` MUST equal `calculated_total`
+- `base_score_reasoning` MUST be present and explain the starting point
 
 ### ⚠️ MINIMUM SCORE FLOOR RULES (CRITICAL):
 
@@ -1308,6 +1664,29 @@ FOR EACH key claim in final_decision:
   → NO claims without evidence
 ```
 
+### 🚨 V15.4: USE activity_id, NOT array indices
+
+**CRITICAL:** Array indices (e.g., `activities[3]`) are UNRELIABLE because activity ordering may vary. Always use `activity_id` for stable references.
+
+```
+❌ WRONG: "json_path": "activities[9].metadata.body"
+✅ CORRECT: "json_path": "activity_id: urn:li:msg_message:MTc1OTEyOTcwOTM4M2I4NDA5OC..."
+
+❌ WRONG: "json_path": "activities[0].recorded_on"
+✅ CORRECT: "json_path": "activity_id: 87602226719, recorded_on: 2025-09-12T07:00:00+00:00"
+```
+
+**Evidence trail entry format:**
+```json
+{
+  "claim": "Last OUTBOUND was Sept 29, 2025",
+  "source": "wave1_results.state_analyzer.activity_scan_verification.last_outbound",
+  "value": "LINKEDIN MESSAGE 'Sous la 🌊?'",
+  "activity_id": "urn:li:msg_message:MTc1OTEyOTcwOTM4M2I4NDA5OC...",
+  "recorded_on": "2025-09-29T07:00:00+00:00"
+}
+```
+
 ### EVIDENCE ANTI-PATTERNS:
 
 ❌ WRONG - Claim without evidence:
@@ -1318,7 +1697,19 @@ FOR EACH key claim in final_decision:
 // No evidence_trail entry for "strong interest" claim
 ```
 
-✅ CORRECT - Every claim backed:
+❌ WRONG - Using array index instead of activity_id:
+```json
+"evidence_trail": [
+  {
+    "claim": "Contact showed strong interest",
+    "source": "wave1_results.state_analyzer.engagement_signals_detected",
+    "value": "DOCUMENT_VIEW on AirSaas - Sécurité.pdf",
+    "json_path": "activities[3]"  // Array index is unreliable!
+  }
+]
+```
+
+✅ CORRECT - Every claim backed with activity_id:
 ```json
 "rationale": {
   "action_reasoning": "Contact showed strong interest via document view"
@@ -1328,7 +1719,8 @@ FOR EACH key claim in final_decision:
     "claim": "Contact showed strong interest",
     "source": "wave1_results.state_analyzer.engagement_signals_detected",
     "value": "DOCUMENT_VIEW on AirSaas - Sécurité.pdf",
-    "json_path": "activities[3]"
+    "activity_id": "7ae9ca824baaf34a2dab7c782f03c7a8",
+    "recorded_on": "2025-12-14T10:30:00+00:00"
   }
 ]
 ```
@@ -1341,6 +1733,66 @@ Every output MUST have evidence for:
 3. **opportunity_strength** (breakdown factors)
 4. **timing** (why this execute_at)
 5. **content source** (where message came from)
+
+====================
+🧮 SYNTHESIS_CONFIDENCE CALCULATION (V15.5 - MANDATORY)
+====================
+
+The `synthesis_confidence` field MUST be calculated (never left as 0 or default).
+
+### CALCULATION FORMULA:
+
+```
+synthesis_confidence = weighted_average(
+  relationship_clarity * 0.20,      # From Context Analyzer
+  channel_certainty * 0.15,         # From Channel Selector
+  content_quality * 0.20,           # From Content Generator
+  timing_accuracy * 0.15,           # From Timing Strategist
+  opportunity_strength * 0.20,      # From Opportunity Detector
+  safety_checks_passed_ratio * 0.10 # From Synthesis Safety Checks
+)
+```
+
+### INPUT SOURCES:
+
+| Factor | Source | Default if Missing |
+|--------|--------|-------------------|
+| relationship_clarity | wave1_results.context_analyzer.confidence | 0.50 |
+| channel_certainty | wave2_results.channel_selector.confidence | 0.50 |
+| content_quality | wave2_results.content_generator.quality_score | 0.50 |
+| timing_accuracy | wave1_results.timing_strategist.confidence | 0.50 |
+| opportunity_strength | calculated via breakdown | 0.50 |
+| safety_checks_passed_ratio | passed_checks / total_checks | 1.0 |
+
+### OUTPUT REQUIREMENT:
+
+```json
+"synthesis_confidence": 0.78,
+"synthesis_confidence_calculation": {
+  "relationship_clarity": {"source": "context_analyzer", "value": 0.85, "weight": 0.20},
+  "channel_certainty": {"source": "channel_selector", "value": 0.60, "weight": 0.15},
+  "content_quality": {"source": "content_generator", "value": 0.85, "weight": 0.20},
+  "timing_accuracy": {"source": "timing_strategist", "value": 0.90, "weight": 0.15},
+  "opportunity_strength": {"source": "opportunity_detector", "value": 0.72, "weight": 0.20},
+  "safety_checks_ratio": {"passed": 5, "total": 5, "value": 1.0, "weight": 0.10},
+  "weighted_total": 0.78
+}
+```
+
+### 🚨 CRITICAL: synthesis_confidence = 0 IS INVALID
+
+If you output `"synthesis_confidence": 0`, this indicates a calculation error.
+The minimum reasonable value is ~0.30 (all defaults with some issues).
+
+**VALIDATION:**
+```
+IF synthesis_confidence == 0:
+  → ERROR: Recalculate using formula above
+  → Use default values for missing inputs
+
+IF synthesis_confidence > 0.95:
+  → WARNING: Verify all inputs are accurate (very high confidence is rare)
+```
 
 ====================
 🚨 SYNTHESIS SAFETY CHECKS - EXPANDED (EXECUTE BEFORE FINAL OUTPUT)

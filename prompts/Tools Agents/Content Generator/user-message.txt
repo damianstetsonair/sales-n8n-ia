@@ -1,4 +1,29 @@
-==This is the JSON data that you must use: {{ $json.toJsonString() }}
+=## WAVE 1 RESULTS + CONTACT DATA:
+{{ $json.query }}
+
+---
+
+## RESOURCES CATALOG (FROM GOOGLE SHEETS):
+{{ $json.resources_context }}
+
+Use resources from `resources_context.resources[]` when offering value. Each resource has:
+- "Resource": Name of the resource
+- "When to use it": Situation when this resource is most effective
+- "Goal": What we want to achieve with this resource
+- "Audience profile": Who this resource is best suited for
+- "Notes": Additional context
+
+---
+
+## BEST PRACTICES (FROM GOOGLE SHEETS):
+{{ $json.best_practices_context }}
+
+Apply best practices from `best_practices_context.practices[]`. Each practice has:
+- "#": Practice number for reference
+- "Bonne Pratique": The best practice rule
+- "Contexte d'usage": When to apply this practice
+- "Phrase / Script exact": Proven script/template to use
+- "Erreur à éviter": Common mistake to avoid
 
 ---
 
