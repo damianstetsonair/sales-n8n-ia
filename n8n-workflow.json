@@ -652,7 +652,7 @@
       "typeVersion": 1,
       "position": [
         2848,
-        -128
+        -160
       ],
       "id": "0fe7b0e1-1a9b-4d59-ada0-6c852279158c",
       "name": "Save final decision into table",
@@ -684,11 +684,10 @@
       "typeVersion": 4.2,
       "position": [
         3136,
-        -128
+        -160
       ],
       "id": "87f3f678-cb74-40a2-a3c6-87f00bf042e3",
-      "name": "Send to Zapier for Slack",
-      "disabled": true
+      "name": "Send to Zapier for Slack"
     },
     {
       "parameters": {
