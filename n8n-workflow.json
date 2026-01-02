@@ -10,10 +10,10 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -1264,
-        64
+        -1440,
+        304
       ],
-      "id": "4eef03bc-1de3-42b8-b6a1-daebb837bd07",
+      "id": "0c5cd06a-9732-4ed3-9e3b-fcb831be2475",
       "name": "Webhook",
       "webhookId": "1aff7e07-0d8d-4b90-9dea-a14edc3c3fec"
     },
@@ -56,10 +56,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        288,
-        -192
+        112,
+        48
       ],
-      "id": "4223c4bd-73aa-4724-a4c4-475252d70550",
+      "id": "c98604cf-a08d-481b-8d2c-afbb98e54dd9",
       "name": "Call Context Analyzer"
     },
     {
@@ -101,10 +101,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        288,
-        144
+        112,
+        384
       ],
-      "id": "552d0e70-2423-4e8c-859f-9181af3634f5",
+      "id": "e587eb3c-550f-40c2-9fcc-76ff59da2cba",
       "name": "Call State Analyzer"
     },
     {
@@ -157,10 +157,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        288,
-        -32
+        112,
+        208
       ],
-      "id": "276267f9-154b-4a76-b227-6153446a5f98",
+      "id": "75c03e54-50d1-4e25-9999-be37e3688e02",
       "name": "Call Opportunity Detector"
     },
     {
@@ -202,10 +202,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        288,
-        320
+        112,
+        560
       ],
-      "id": "fd0ebd8e-b1ad-43b1-baac-75466c938edd",
+      "id": "c2cf4c47-99c5-49ef-8b27-7b63b4ad3a2d",
       "name": "Call Timing Strategist"
     },
     {
@@ -215,10 +215,10 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        560,
-        32
+        384,
+        272
       ],
-      "id": "54d4db74-fc58-48db-921e-7925111804d7",
+      "id": "b5a1190e-05a1-48f0-90e0-784ec757a3c9",
       "name": "Wave1_results"
     },
     {
@@ -228,10 +228,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1168,
-        64
+        992,
+        304
       ],
-      "id": "486c940f-5497-4815-af0b-c97539af39a8",
+      "id": "1b265946-f314-4b31-99c2-8b75f7021082",
       "name": "Parse evaluation JSON"
     },
     {
@@ -295,10 +295,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.3,
       "position": [
-        1376,
-        64
+        1200,
+        304
       ],
-      "id": "7751c623-8541-4cc9-a13f-5133cbf12cee",
+      "id": "7e01a84c-caaf-4b73-ac17-85e9616e1890",
       "name": "Retry Wave 1?"
     },
     {
@@ -310,10 +310,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        0,
-        64
+        -176,
+        304
       ],
-      "id": "8c0d35a2-e7f1-45ec-bbf8-71c10574d494",
+      "id": "b471c306-9fc2-437b-8811-ce52077a5f68",
       "name": "Save data call"
     },
     {
@@ -324,10 +324,10 @@
       "type": "n8n-nodes-base.crypto",
       "typeVersion": 1,
       "position": [
-        -336,
-        64
+        -512,
+        304
       ],
-      "id": "6c48e234-9a64-46eb-a81f-399cc67b2dc6",
+      "id": "508eb4a5-3835-4a95-a208-a6ede41a410e",
       "name": "Generate UUID"
     },
     {
@@ -367,10 +367,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1824,
-        48
+        1648,
+        288
       ],
-      "id": "d1b479df-4570-45ca-86c9-bee3c206c5d1",
+      "id": "31cf05b5-270a-429f-8166-8762fcfd9847",
       "name": "Call channel selector"
     },
     {
@@ -410,10 +410,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1824,
-        208
+        1648,
+        448
       ],
-      "id": "8cc2b3c6-e967-4f78-8b82-bd563e1f5fb1",
+      "id": "194cdcd0-128a-41ae-b4fb-2d3cf946638e",
       "name": "Call Sequence Strategist"
     },
     {
@@ -482,10 +482,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1824,
-        -112
+        1648,
+        128
       ],
-      "id": "085370f2-b750-43a8-83d5-5929850fbb4c",
+      "id": "1eccba19-321a-4b80-9997-a4a7de2f4dae",
       "name": "Call Content Generator",
       "executeOnce": true
     },
@@ -496,10 +496,10 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        2080,
-        32
+        1904,
+        272
       ],
-      "id": "2f648805-0f70-4ac1-a073-361be4bd26af",
+      "id": "1ce8c252-d471-48b4-9287-a0d0ea203817",
       "name": "Wave2_results"
     },
     {
@@ -526,10 +526,10 @@
       "type": "@n8n/n8n-nodes-langchain.anthropic",
       "typeVersion": 1,
       "position": [
-        2272,
-        48
+        2096,
+        288
       ],
-      "id": "342052ae-2794-46de-8021-d828356b2e9b",
+      "id": "756b64af-ce92-4532-a829-642849861104",
       "name": "Orchestrator Synthesis",
       "executeOnce": true,
       "retryOnFail": true,
@@ -550,10 +550,10 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        240,
-        -304
+        64,
+        -64
       ],
-      "id": "050782f8-5317-4c68-9366-28f85aeead45",
+      "id": "58959f00-4fd0-4d49-994e-c1ae6655afb7",
       "name": "Sticky Note"
     },
     {
@@ -566,10 +566,10 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1776,
-        -304
+        1600,
+        -64
       ],
-      "id": "940ef5ed-ffde-4ff9-bb88-d7cd3a8f1834",
+      "id": "e72a17c5-3a6d-403a-868a-ab349ac5a22c",
       "name": "Sticky Note1"
     },
     {
@@ -583,17 +583,17 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1600,
-        -112
+        1424,
+        128
       ],
-      "id": "e831ae81-c8e9-46bd-87ce-d47331688eb6",
+      "id": "ff0aa248-3fc4-4056-9223-d90d11b8b7e1",
       "name": "Get historical recommendations",
       "executeOnce": true,
       "alwaysOutputData": true,
       "credentials": {
         "supabaseApi": {
-          "id": "7YYll9c7CXOe1KjY",
-          "name": "AI_Sales_supabase"
+          "id": "ZcV6LGHUvErBytqu",
+          "name": "AI_sales_supabase_DEV"
         }
       }
     },
@@ -604,10 +604,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2576,
-        48
+        2400,
+        288
       ],
-      "id": "2c175788-06f1-459c-b170-9081de183940",
+      "id": "66055893-2ad9-41f6-8372-3cd82a656bb6",
       "name": "Parse JSON"
     },
     {
@@ -621,10 +621,10 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        -160,
-        64
+        -336,
+        304
       ],
-      "id": "84d2dd2f-7d1a-472d-a15b-c6bd43cf6ea4",
+      "id": "c25157ad-a987-4ff7-8a65-b9d1820884ad",
       "name": "Respond to Webhook with session_id",
       "executeOnce": true
     },
@@ -651,16 +651,16 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        2848,
-        -160
+        2672,
+        80
       ],
-      "id": "0fe7b0e1-1a9b-4d59-ada0-6c852279158c",
+      "id": "2b164213-3f8e-44ef-a447-6061f03f0723",
       "name": "Save final decision into table",
       "retryOnFail": true,
       "credentials": {
         "supabaseApi": {
-          "id": "7YYll9c7CXOe1KjY",
-          "name": "AI_Sales_supabase"
+          "id": "ZcV6LGHUvErBytqu",
+          "name": "AI_sales_supabase_DEV"
         }
       }
     },
@@ -683,11 +683,12 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3136,
-        -160
+        2960,
+        80
       ],
-      "id": "87f3f678-cb74-40a2-a3c6-87f00bf042e3",
-      "name": "Send to Zapier for Slack"
+      "id": "ac94a64f-1e03-44a6-be6b-8c1aa56e7819",
+      "name": "Send to Zapier for Slack",
+      "disabled": true
     },
     {
       "parameters": {
@@ -696,10 +697,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2848,
-        48
+        2672,
+        288
       ],
-      "id": "743c298e-bc83-4cef-9bef-30a9b467a561",
+      "id": "6904d767-e890-444a-955f-1218e9f2e8ba",
       "name": "Collect Workflow Run"
     },
     {
@@ -837,15 +838,15 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        3312,
-        48
+        3136,
+        288
       ],
-      "id": "c530b6fd-1424-435e-8afb-e9e78cdd8e30",
+      "id": "51ee4e82-ea5e-4aae-8019-e7149fc7ec65",
       "name": "Save Workflow Run",
       "credentials": {
         "supabaseApi": {
-          "id": "7YYll9c7CXOe1KjY",
-          "name": "AI_Sales_supabase"
+          "id": "ZcV6LGHUvErBytqu",
+          "name": "AI_sales_supabase_DEV"
         }
       }
     },
@@ -870,10 +871,10 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.7,
       "position": [
-        -976,
-        64
+        -1152,
+        304
       ],
-      "id": "b29ed356-6e0e-4d39-a108-55d56e4453a1",
+      "id": "2fa20b5f-c675-43ba-ae7a-854e508acfc1",
       "name": "Get resources",
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -903,10 +904,10 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.7,
       "position": [
-        -816,
-        64
+        -992,
+        304
       ],
-      "id": "828203ca-7e42-4420-9772-b4f1fe35d888",
+      "id": "6b0a0f70-3a7a-4513-be2d-c060f52b2fc2",
       "name": "Get practices",
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -925,10 +926,10 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1056,
-        -16
+        -1232,
+        224
       ],
-      "id": "dc78d110-455b-4861-a7d8-30c4d40a0f69",
+      "id": "a3865cf6-d525-4f93-9e02-5b8c1f6b5e85",
       "name": "Sticky Note2"
     },
     {
@@ -938,10 +939,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -560,
-        64
+        -736,
+        304
       ],
-      "id": "f8e05a49-a39e-4d61-8afc-34d2ddfc5368",
+      "id": "306f625c-4529-4d36-8c0c-d08c2b64ed77",
       "name": "Merge GSheet Data"
     },
     {
@@ -951,10 +952,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3136,
-        256
+        2960,
+        496
       ],
-      "id": "71113808-8e11-4194-9cf3-d8e5654c05f8",
+      "id": "0ed9f385-f4fb-45cd-9975-60e860e89b23",
       "name": "Parse evaluator JSON"
     },
     {
@@ -981,10 +982,10 @@
       "type": "@n8n/n8n-nodes-langchain.anthropic",
       "typeVersion": 1,
       "position": [
-        784,
-        64
+        608,
+        304
       ],
-      "id": "1cca17f2-dcce-4935-94b7-69c86a7420d5",
+      "id": "864dda19-686b-4e1b-9a60-9c85170313b3",
       "name": "Orchestrator Wave 1 Evaluation",
       "executeOnce": true,
       "retryOnFail": true,
@@ -1020,10 +1021,10 @@
       "type": "@n8n/n8n-nodes-langchain.anthropic",
       "typeVersion": 1,
       "position": [
-        2832,
-        256
+        2656,
+        496
       ],
-      "id": "8e154151-327a-43ff-9bf9-c0c25e37f1b9",
+      "id": "aa9a8439-8099-4ef8-9bd2-7b16c3d023af",
       "name": "Evaluate Decision based on contact info",
       "executeOnce": true,
       "credentials": {
@@ -1041,15 +1042,15 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        3312,
-        256
+        3136,
+        496
       ],
-      "id": "9812d280-e970-4252-b680-aacc3c953954",
+      "id": "b4288ba2-99e7-4382-88bd-c88d0ea0a2df",
       "name": "save input/output evaluation",
       "credentials": {
         "supabaseApi": {
-          "id": "7YYll9c7CXOe1KjY",
-          "name": "AI_Sales_supabase"
+          "id": "ZcV6LGHUvErBytqu",
+          "name": "AI_sales_supabase_DEV"
         }
       }
     },
@@ -1064,7 +1065,26 @@
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
-          "value": {}
+          "value": {
+            "branch": "develop"
+          },
+          "matchingColumns": [
+            "branch"
+          ],
+          "schema": [
+            {
+              "id": "branch",
+              "displayName": "branch",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
         },
         "options": {
           "waitForSubWorkflow": true
@@ -1073,10 +1093,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3136,
-        48
+        2960,
+        288
       ],
-      "id": "5456338a-0e3e-4390-bb62-60a50662af21",
+      "id": "6fda606c-0e94-4b25-b762-7fcb3c63b892",
       "name": "Call 'Prompts Loader'"
     }
   ],
@@ -1423,7 +1443,6 @@
   },
   "pinData": {},
   "meta": {
-    "templateCredsSetupCompleted": true,
     "instanceId": "68281001cf81541d7dbe4d9b4209e0b29467134afcd3e5ae5b83989067eba263"
   }
 }
