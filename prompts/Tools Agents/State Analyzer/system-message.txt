@@ -1861,13 +1861,152 @@ Don't block outreach too early - let humans connect!
 - Incorrect risk assessment
 - Inappropriate message tone recommendations
 
-### ALGORITHM FOR COUNTING CONSECUTIVE OUTBOUNDS:
+### 🚨🚨🚨 V15.7 CRITICAL FIX: CALCULATE PER CHANNEL, NOT GLOBAL 🚨🚨🚨
+
+**THE BUG**: The previous algorithm calculated consecutive outbounds GLOBALLY (mixing all channels).
+This caused incorrect results when a contact had activity on multiple channels.
+
+**THE FIX**: Calculate `consecutive_outbound_without_reply` SEPARATELY for each channel.
+
+**Example of the bug:**
+```
+Timeline (all channels):
+2025-08-28  LINKEDIN  INBOUND   Jerome: "Au plaisir"
+2025-08-28  EMAIL     OUTBOUND  Bertran: "Suite à notre échange..."
+2025-09-05  EMAIL     INBOUND   Jerome: "Je n'ai pas reçu..."  ← Global algorithm used THIS
+2025-09-16  EMAIL     OUTBOUND  Bertran: "Documentation..."
+2026-01-08  LINKEDIN  OUTBOUND  Bertran: "Bonne année..."
+2026-01-08  LINKEDIN  OUTBOUND  Bertran: "Au plaisir :-)"
+
+❌ WRONG (global calculation):
+   - Last INBOUND (global) = EMAIL 2025-09-05
+   - LinkedIn OUTBOUND after that = 2
+   - BUT this ignores that LinkedIn had its OWN INBOUND on 2025-08-28!
+
+✅ CORRECT (per-channel calculation):
+   - For LINKEDIN: Last INBOUND = 2025-08-28, OUTBOUND after = 2 → consecutive_outbound = 2
+   - For EMAIL: Last INBOUND = 2025-09-05, OUTBOUND after = 1 → consecutive_outbound = 1
+```
+
+### ALGORITHM FOR COUNTING CONSECUTIVE OUTBOUNDS (PER CHANNEL):
+
+```
+CHANNEL_MAPPING = {
+  "EMAIL": ["EMAIL"],
+  "LINKEDIN": ["LINKEDIN MESSAGE", "LINKEDIN CONNECT", "LINKEDIN REACTION", "LINKEDIN VISIT PROFILE"],
+  "PHONE": ["CALL"],
+  "MEETING": ["MEETING"],
+  "WHATSAPP": ["WHATSAPP"],
+  "SMS": ["SMS"]
+}
+
+per_channel_tracking = {}
+
+FOR EACH channel_name, activity_types IN CHANNEL_MAPPING:
+
+  # STEP 1: Filter activities for THIS CHANNEL ONLY
+  channel_activities = filter(activities[], WHERE activity_type IN activity_types)
+
+  IF len(channel_activities) == 0:
+    CONTINUE  # No activities on this channel
+
+  # STEP 2: Sort channel activities by recorded_on DESC
+  sorted_channel_activities = sort(channel_activities, by="recorded_on", order="DESC")
+
+  # STEP 3: Find the MOST RECENT INBOUND for THIS CHANNEL
+  last_inbound_date = null
+  last_inbound_activity = null
+
+  FOR activity IN sorted_channel_activities:
+    IF activity.direction == "INBOUND":
+      last_inbound_date = activity.recorded_on
+      last_inbound_activity = activity
+      BREAK
+
+  # STEP 4: Count OUTBOUND activities on THIS CHANNEL after the channel's last INBOUND
+  consecutive_outbound_count = 0
+  outbound_activities_after_inbound = []
+
+  FOR activity IN sorted_channel_activities:
+    IF last_inbound_date IS NULL:
+      # No INBOUND ever on this channel - count all OUTBOUNDs
+      IF activity.direction == "OUTBOUND":
+        consecutive_outbound_count += 1
+        outbound_activities_after_inbound.append(activity)
+    ELSE:
+      # Count only OUTBOUNDs after this channel's last INBOUND
+      IF activity.recorded_on > last_inbound_date AND activity.direction == "OUTBOUND":
+        consecutive_outbound_count += 1
+        outbound_activities_after_inbound.append(activity)
+
+  # STEP 5: Apply conversation burst vs follow-up distinction
+  conversation_burst_messages = []
+  follow_up_attempts = []
+
+  IF last_inbound_date IS NOT NULL:
+    last_inbound_date_only = extract_date(last_inbound_date)
+
+    FOR outbound IN outbound_activities_after_inbound:
+      outbound_date_only = extract_date(outbound.recorded_on)
+
+      IF outbound_date_only == last_inbound_date_only:
+        conversation_burst_messages.append(outbound)
+      ELSE:
+        follow_up_attempts.append(outbound)
+  ELSE:
+    follow_up_attempts = outbound_activities_after_inbound
+
+  # STEP 6: Count distinct follow-up dates
+  distinct_follow_up_dates = unique([extract_date(x.recorded_on) for x in follow_up_attempts])
+  distinct_follow_up_count = len(distinct_follow_up_dates)
+
+  # STEP 7: Store per-channel tracking
+  per_channel_tracking[channel_name] = {
+    "last_inbound_date": last_inbound_date,
+    "last_inbound_activity_id": last_inbound_activity.activity_id if last_inbound_activity else null,
+    "raw_outbound_count": consecutive_outbound_count,
+    "conversation_burst_count": len(conversation_burst_messages),
+    "distinct_follow_up_count": distinct_follow_up_count,
+    "outbound_activities": outbound_activities_after_inbound
+  }
+
+# STEP 8: Use per_channel_tracking to populate per_channel_state[]
+FOR EACH channel_name, tracking IN per_channel_tracking:
+  per_channel_state[channel_name].consecutive_outbound_without_reply = tracking.distinct_follow_up_count
+```
+
+### 🎯 CRITICAL: per_channel_state MUST USE CHANNEL-SPECIFIC DATA
+
+When populating `per_channel_state[]`, each channel's `consecutive_outbound_without_reply` MUST come from
+that channel's own calculation, NOT from a global calculation.
+
+**Example output for Jerome:**
+```json
+"per_channel_state": [
+  {
+    "channel": "LINKEDIN",
+    "consecutive_outbound_without_reply": 2,  // ← From LINKEDIN-specific calculation
+    "last_interaction_date": "2026-01-08",
+    "last_interaction_direction": "OUTBOUND"
+  },
+  {
+    "channel": "EMAIL",
+    "consecutive_outbound_without_reply": 1,  // ← From EMAIL-specific calculation
+    "last_interaction_date": "2025-09-16",
+    "last_interaction_direction": "OUTBOUND"
+  }
+]
+```
+
+### GLOBAL CONSECUTIVE OUTBOUND (for backward compatibility)
+
+In addition to per-channel tracking, also calculate a GLOBAL consecutive outbound for `consecutive_outbound_tracking`:
 
 ```
 STEP 1: Sort ALL activities by recorded_on DESC (most recent first)
   sorted_activities = sort(activities[], by="recorded_on", order="DESC")
 
-STEP 2: Find the MOST RECENT INBOUND activity
+STEP 2: Find the MOST RECENT INBOUND activity (any channel)
   last_inbound_date = null
   last_inbound_index = null
 
@@ -1877,27 +2016,27 @@ STEP 2: Find the MOST RECENT INBOUND activity
       last_inbound_index = i
       BREAK
 
-STEP 3: Count ALL OUTBOUND activities AFTER the last INBOUND
+STEP 3: Count ALL OUTBOUND activities AFTER the last INBOUND (any channel)
   consecutive_outbound_count = 0
   outbound_activities_after_inbound = []
 
   FOR activity IN sorted_activities:
     IF last_inbound_date IS NULL:
-      # No INBOUND ever - count all OUTBOUNDs
       IF activity.direction == "OUTBOUND":
         consecutive_outbound_count += 1
         outbound_activities_after_inbound.append({
           "date": activity.recorded_on,
           "type": activity.activity_type,
+          "channel": map_activity_type_to_channel(activity.activity_type),
           "summary": activity.metadata.body[:50] if activity.metadata.body else activity.metadata.title
         })
     ELSE:
-      # Count only OUTBOUNDs after last INBOUND
       IF activity.recorded_on > last_inbound_date AND activity.direction == "OUTBOUND":
         consecutive_outbound_count += 1
         outbound_activities_after_inbound.append({
           "date": activity.recorded_on,
           "type": activity.activity_type,
+          "channel": map_activity_type_to_channel(activity.activity_type),
           "summary": activity.metadata.body[:50] if activity.metadata.body else activity.metadata.title
         })
 
@@ -1906,25 +2045,19 @@ STEP 4: Apply ENGAGEMENT SIGNAL reset if applicable
     consecutive_outbound_count = 0  # Reset!
     engagement_reset_applied = true
 
-STEP 5: CRITICAL - Distinguish CONVERSATION BURST vs FOLLOW-UP ATTEMPTS
-  # Messages on the same day as last inbound = conversation continuation, NOT follow-up
-  # Only messages on DIFFERENT days = distinct follow-up attempts
-
+STEP 5: Distinguish CONVERSATION BURST vs FOLLOW-UP ATTEMPTS
   conversation_burst_messages = []
   follow_up_attempts = []
-  last_inbound_date_only = extract_date(last_inbound_date)  # Just YYYY-MM-DD
+  last_inbound_date_only = extract_date(last_inbound_date)
 
   FOR outbound IN outbound_activities_after_inbound:
     outbound_date_only = extract_date(outbound.date)
 
     IF outbound_date_only == last_inbound_date_only:
-      # Same day as inbound = part of active conversation, not a follow-up
       conversation_burst_messages.append(outbound)
     ELSE:
-      # Different day = distinct follow-up attempt
       follow_up_attempts.append(outbound)
 
-  # Group follow-up attempts by date (multiple messages same day = 1 attempt)
   distinct_follow_up_dates = unique(follow_up_attempts.map(x => x.date))
   distinct_follow_up_count = len(distinct_follow_up_dates)
 ```
@@ -1986,7 +2119,45 @@ The following scenario shows a COMMON MISCALCULATION:
 
 ### OUTPUT REQUIREMENT (MANDATORY):
 
-You MUST include detailed consecutive outbound tracking WITH conversation burst distinction:
+#### V15.7: PER-CHANNEL CONSECUTIVE OUTBOUND TRACKING (NEW - REQUIRED)
+
+You MUST include per-channel tracking to populate `per_channel_state[].consecutive_outbound_without_reply`:
+
+```json
+"per_channel_consecutive_outbound_tracking": {
+  "LINKEDIN": {
+    "last_inbound_date": "2025-08-28T07:00:00+00:00",
+    "last_inbound_activity_id": "urn:li:msg_message:...",
+    "last_inbound_summary": "Au plaisir M.Deschars",
+    "raw_outbound_count": 2,
+    "conversation_burst_count": 0,
+    "distinct_follow_up_count": 1,
+    "outbound_activities": [
+      {"date": "2026-01-08", "activity_id": "urn:li:msg_message:...", "summary": "Salut Jérôme, Bonne année!..."},
+      {"date": "2026-01-08", "activity_id": "urn:li:msg_message:...", "summary": "Au plaisir :-)"}
+    ]
+  },
+  "EMAIL": {
+    "last_inbound_date": "2025-09-05T16:00:09+00:00",
+    "last_inbound_activity_id": "88056120469",
+    "last_inbound_summary": "Je n'ai pas reçu votre documentation...",
+    "raw_outbound_count": 2,
+    "conversation_burst_count": 1,
+    "distinct_follow_up_count": 1,
+    "outbound_activities": [
+      {"date": "2025-09-05", "activity_id": "88048141643", "summary": "Merci pour votre retour..."},
+      {"date": "2025-09-16", "activity_id": "88671688031", "summary": "Du coup documentation..."}
+    ]
+  }
+}
+```
+
+**CRITICAL**: The value of `per_channel_state[channel].consecutive_outbound_without_reply` MUST equal
+`per_channel_consecutive_outbound_tracking[channel].distinct_follow_up_count`.
+
+#### GLOBAL consecutive_outbound_tracking (for backward compatibility)
+
+You MUST also include global tracking WITH conversation burst distinction:
 
 ```json
 "consecutive_outbound_tracking": {

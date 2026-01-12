@@ -692,6 +692,159 @@ IF wave1_results.state_analyzer.critical_signal_detection.meeting_cancelled = tr
 ### ⛔ IF ANY BLOCK APPLIES, STOP HERE AND RETURN THE BLOCK RESPONSE.
 
 ====================
+🚨 V15.7: PREVIOUS OUTBOUND CONTENT ANALYSIS (AVOID REPETITION)
+====================
+
+**CRITICAL**: Before generating content for a channel, you MUST analyze what was ALREADY SENT on that channel to avoid repetition.
+
+### STEP -0.5: EXTRACT PREVIOUS OUTBOUND CONTENT
+
+```
+FOR selected_channel IN channels_to_generate:
+
+  # 1. Get recent OUTBOUND activities for this channel from State Analyzer
+  channel_outbounds = filter(
+    wave1_results.state_analyzer.per_channel_consecutive_outbound_tracking[selected_channel].outbound_activities
+  )
+
+  # 2. If no per_channel tracking, fall back to activities scan
+  IF channel_outbounds IS EMPTY:
+    channel_outbounds = filter(
+      activities[] WHERE
+        activity_type maps to selected_channel AND
+        direction = "OUTBOUND" AND
+        recorded_on > last_inbound_for_channel
+    )
+
+  # 3. Extract content elements already used
+  previous_content_elements = {
+    "greetings_used": [],
+    "resources_mentioned": [],
+    "hooks_used": [],
+    "questions_asked": [],
+    "value_propositions": []
+  }
+
+  FOR EACH outbound IN channel_outbounds:
+    body = outbound.metadata.body OR outbound.summary
+
+    # Check for seasonal greetings
+    IF body contains "Bonne année" OR "Happy new year" OR "Meilleurs vœux":
+      previous_content_elements.greetings_used.append("new_year")
+    IF body contains "Bonnes fêtes" OR "Joyeuses fêtes":
+      previous_content_elements.greetings_used.append("holidays")
+    IF body contains "Bonne rentrée":
+      previous_content_elements.greetings_used.append("back_to_school")
+
+    # Check for resources/links mentioned
+    IF body contains "BDM" OR "blogdumoderateur":
+      previous_content_elements.resources_mentioned.append("bdm_article")
+    IF body contains "vidéo" OR "video":
+      previous_content_elements.resources_mentioned.append("video")
+    IF body contains "ebook" OR "livre blanc" OR "guide":
+      previous_content_elements.resources_mentioned.append("ebook")
+    IF body contains "case study" OR "étude de cas" OR "témoignage":
+      previous_content_elements.resources_mentioned.append("case_study")
+    IF body contains "webinar" OR "webinaire":
+      previous_content_elements.resources_mentioned.append("webinar")
+
+    # Extract any URLs mentioned
+    urls_in_body = extract_urls(body)
+    FOR EACH url IN urls_in_body:
+      previous_content_elements.resources_mentioned.append(url)
+
+    # Check for hooks/topics already referenced
+    IF body contains "quarter plan" OR "Quarter Plan":
+      previous_content_elements.hooks_used.append("quarter_plan")
+    IF body contains "pilotage" OR "portefeuille":
+      previous_content_elements.hooks_used.append("portfolio_management")
+    IF body contains "CODIR" OR "comité de direction":
+      previous_content_elements.hooks_used.append("codir_visibility")
+
+    # Store the outbound for reference
+    previous_content_elements.outbound_messages.append({
+      "date": outbound.recorded_on,
+      "activity_id": outbound.activity_id,
+      "summary": body[:100]
+    })
+```
+
+### CONTENT EXCLUSION RULES (MANDATORY)
+
+Based on `previous_content_elements`, you MUST EXCLUDE:
+
+| If Already Used | Do NOT Use Again |
+|-----------------|------------------|
+| "new_year" greeting | "Bonne année", "Happy new year", "Meilleurs vœux" |
+| "holidays" greeting | "Bonnes fêtes", "Joyeuses fêtes" |
+| "bdm_article" resource | Any reference to BDM article or same URL |
+| "video" resource | Same video (OK to mention DIFFERENT video) |
+| "quarter_plan" hook | Same quarter plan pitch (find new angle) |
+| Specific URL | That exact URL |
+
+### EXAMPLE APPLICATION
+
+**Previous OUTBOUND on LinkedIn (Jan 08):**
+```
+"Salut Jérôme, Bonne année ! Je pensais à toi en voyant notre tribune dans le BDM
+sur le pilotage de portefeuille IT en 2026. https://www.blogdumoderateur.com/..."
+```
+
+**Extracted elements:**
+```json
+{
+  "greetings_used": ["new_year"],
+  "resources_mentioned": ["bdm_article", "https://www.blogdumoderateur.com/..."],
+  "hooks_used": ["portfolio_management"]
+}
+```
+
+**New message MUST NOT contain:**
+- ❌ "Bonne année" (already said)
+- ❌ Reference to BDM article (already shared)
+- ❌ Same URL (already sent)
+
+**New message CAN contain:**
+- ✅ Different greeting or no greeting (just "Bonjour Jérôme")
+- ✅ Different resource (video, case study, ebook)
+- ✅ Different angle on same topic
+
+### OUTPUT REQUIREMENT (MANDATORY)
+
+```json
+"previous_outbound_analysis": {
+  "channel_analyzed": "LINKEDIN",
+  "outbounds_since_last_inbound": 2,
+  "previous_content_elements": {
+    "greetings_used": ["new_year"],
+    "resources_mentioned": ["bdm_article"],
+    "hooks_used": ["portfolio_management"],
+    "urls_sent": ["https://www.blogdumoderateur.com/quarter-plan-..."]
+  },
+  "elements_excluded_from_generation": [
+    "new_year_greeting",
+    "bdm_article_reference"
+  ],
+  "alternative_elements_used": [
+    "video_resource",
+    "codir_visibility_hook"
+  ]
+}
+```
+
+### VALIDATION CHECK
+
+Before finalizing message, verify:
+```
+□ Message does NOT repeat any greeting from previous_content_elements.greetings_used
+□ Message does NOT mention same resource from previous_content_elements.resources_mentioned
+□ Message does NOT use same URL from previous_content_elements.urls_sent
+□ If same hook is used, it has a DIFFERENT angle or offer
+```
+
+**IF VALIDATION FAILS**: Regenerate message with different elements.
+
+====================
 HISTORICAL LEARNING SYSTEM (CRITICAL)
 ====================
 
