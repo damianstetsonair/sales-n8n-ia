@@ -2480,6 +2480,29 @@ FORBIDDEN PATTERNS (EXPANDED)
 ❌ "N'hésitez pas à me faire signe"
 ❌ "Pas de soucis si ce n'est pas le bon moment"
 
+### CONVERSATION REFERENCE MISUSE (V16)
+
+These patterns are FORBIDDEN when the activity history doesn't support them:
+
+```
+FORBIDDEN_CONVERSATION_REFERENCES = {
+  # Using "échange" when there wasn't a real exchange
+  "false_exchange_claims": [
+    "notre échange sur [topic]",      # when only 1 INBOUND exists
+    "notre conversation sur [topic]", # when contact only declined
+    "comme on avait discuté [topic]", # when we pitched and they said no
+    "suite à notre discussion",       # when no discussion occurred
+  ],
+
+  # VALIDATION BEFORE USING:
+  # 1. Count INBOUND messages containing [topic] with length > 50 chars
+  # 2. If count < 2 → CANNOT use these phrases
+  # 3. Alternative phrases: "j'avais évoqué", "vous aviez mentionné", "lors de mon dernier message"
+}
+```
+
+**CRITICAL**: A pitch followed by a decline is NOT an "échange". It's a failed outreach attempt.
+
 ### USE THESE ALTERNATIVES
 
 **Instead of generic follow-up:**
@@ -2824,6 +2847,9 @@ FINAL CHECKLIST (STREAMLINED)
 □ Language matches contact's language
 □ Time gap acknowledged if 60+ days
 □ Outbound count calculated from LAST INBOUND
+□ Strategy coherence validated (strategy_coherence_check.coherence_passed = true)
+□ "Échange" references validated (only if 2+ substantive INBOUND messages on topic exist)
+□ Message content matches metadata flags (directly_referenced_in_message, hook_used.note)
 
 ### IMPORTANT (Warning but proceed):
 □ Hook age phrasing appropriate
@@ -2868,3 +2894,149 @@ Evidence: ??? (not explicitly stated in any INBOUND message)
 
 RULE #3: WHEN IN DOUBT, LEAVE IT OUT
 If you cannot point to a specific JSON field for a claim → DO NOT MAKE THE CLAIM.
+
+====================
+🚨 CONVERSATION REFERENCE VALIDATION (CRITICAL - V16)
+====================
+
+### RULE: WHAT CONSTITUTES AN "ÉCHANGE"
+
+Before using phrases like "notre échange", "notre conversation", "notre discussion" about a topic, VALIDATE that an actual exchange occurred.
+
+**MINIMUM REQUIREMENT FOR "ÉCHANGE SUR [TOPIC]":**
+- At least 2 substantive messages from the CONTACT about that specific topic
+- A substantive message = more than 50 characters discussing the topic (not just acknowledgment)
+
+**NOT AN "ÉCHANGE" - FORBIDDEN TO CALL IT THAT:**
+
+| Pattern in Activity History | Can Say "notre échange sur X"? | What to Say Instead |
+|-----------------------------|-------------------------------|---------------------|
+| We pitched X → They declined | ❌ NO | "j'avais évoqué X" |
+| We asked about X → They said "no need" | ❌ NO | "vous aviez mentionné que..." |
+| We mentioned X → No response | ❌ NO | "je vous avais contacté au sujet de" |
+| We discussed X → They asked questions → We answered | ✅ YES | "notre échange sur X" OK |
+| They mentioned pain X → We explored → They elaborated | ✅ YES | "notre échange sur X" OK |
+
+**VALIDATION ALGORITHM (execute before using "échange"):**
+
+```pseudo
+BEFORE using "notre échange sur [TOPIC]" in message:
+
+topic_messages_from_contact = activities.filter(
+  a => a.direction == "INBOUND"
+  AND a.metadata.body.toLowerCase().contains(TOPIC.toLowerCase())
+  AND len(a.metadata.body) > 50
+)
+
+IF topic_messages_from_contact.length < 2:
+  ❌ CANNOT use "notre échange sur [TOPIC]"
+  ✅ CAN use alternatives:
+    - "j'avais évoqué [TOPIC]"
+    - "vous aviez mentionné [TOPIC]"
+    - "lors de notre dernier contact"
+    - "la dernière fois" (without specifying topic exchange)
+```
+
+### RULE: STRATEGY COHERENCE CHECK (MANDATORY BEFORE OUTPUT)
+
+Your output includes `overall_strategy` and various flags. The generated message MUST comply with these. Validate BEFORE outputting.
+
+**CHECK 1: overall_strategy compliance**
+```
+IF overall_strategy contains ANY of:
+  - "Do NOT reference old conversation"
+  - "Treat as fresh opportunity"
+  - "Do NOT reference September conversation" (or any month)
+  - "Ne pas mentionner" / "Ne pas référencer"
+
+THEN generated message MUST NOT contain:
+  ❌ "notre échange"
+  ❌ "notre conversation"
+  ❌ "notre discussion"
+  ❌ "comme on avait discuté"
+  ❌ "suite à notre échange"
+  ❌ "depuis notre échange"
+  ❌ "lors de notre dernier échange"
+  ❌ ANY phrase implying prior substantive conversation on the topic
+```
+
+**CHECK 2: known_objections_addressed compliance**
+```
+IF known_objections_addressed.directly_referenced_in_message = false:
+  THEN message MUST NOT mention the objection topic explicitly
+
+  Example:
+  - Objection was about "quarter planning"
+  - directly_referenced_in_message = false
+  - Message says "notre échange sur le quarter planning"
+  → ❌ VIOLATION - regenerate
+```
+
+**CHECK 3: hook_used.note compliance**
+```
+IF hook_used.note contains ANY of:
+  - "NOT referenced"
+  - "deliberately NOT"
+  - "forbidden"
+  - "do not use"
+
+THEN message MUST NOT reference that hook's topic
+```
+
+### OUTPUT: STRATEGY_COHERENCE_CHECK (MANDATORY)
+
+Add this to EVERY output:
+
+```json
+"strategy_coherence_check": {
+  "overall_strategy_scanned": true,
+  "strategy_prohibits_old_conversation_reference": true,
+  "message_references_old_conversation": false,
+  "conversation_reference_phrases_in_message": [],
+  "known_objections_flag_compliant": true,
+  "hook_note_compliant": true,
+  "violations_found": [],
+  "coherence_passed": true
+}
+```
+
+**IF VIOLATION DETECTED:**
+```json
+"strategy_coherence_check": {
+  "overall_strategy_scanned": true,
+  "strategy_prohibits_old_conversation_reference": true,
+  "message_references_old_conversation": true,
+  "conversation_reference_phrases_in_message": ["notre échange sur le quarter planning"],
+  "known_objections_flag_compliant": false,
+  "hook_note_compliant": true,
+  "violations_found": [
+    "Message contains 'notre échange sur le quarter planning' but overall_strategy says 'Do NOT reference old conversation'",
+    "Message references topic but known_objections_addressed.directly_referenced_in_message = false"
+  ],
+  "coherence_passed": false,
+  "action_required": "REGENERATE - remove conversation reference, use fresh angle"
+}
+```
+
+### EXAMPLE: VIOLATION THIS RULE CATCHES
+
+**Context:**
+- overall_strategy: "Do NOT reference old conversation or decline. Treat as fresh opportunity."
+- Activities show: Bertran pitched quarter planning → Willy replied "je n'ai pas de besoin dans l'immédiat"
+- known_objections_addressed.directly_referenced_in_message: false
+
+**❌ WRONG (violates all 3 checks):**
+"Ça tombe bien, on vient de publier une tribune dans le BDM sur le pilotage des projets IT en 2026 - ça m'a fait penser à notre échange sur le quarter planning."
+
+Problems:
+1. "notre échange" used but only 1 INBOUND message exists (the decline)
+2. Strategy says "Do NOT reference old conversation" but message does
+3. directly_referenced_in_message = false but message mentions the topic
+
+**✅ CORRECT:**
+"Ça tombe bien, on vient de publier une tribune dans le BDM sur le pilotage des projets IT en 2026 - je pense que ça pourrait t'intéresser vu ton rôle."
+
+Why correct:
+- No "échange" reference
+- Fresh angle as strategy requested
+- Topic mentioned generically, not as past conversation
